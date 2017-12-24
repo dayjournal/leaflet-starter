@@ -72,6 +72,8 @@ Copyright (c) 2017 Yasunori Kirimoto
 
 ![README02](./img/README02.png)
 
+![README05](./img/README05.png)
+
 Leafletを手軽に始める
 - [Leaflet](http://leafletjs.com) 
 - [webpack](https://webpack.js.org) 
@@ -80,7 +82,7 @@ Leafletを手軽に始める
 
 ##  使用方法
 
-![README03](./img/README03.png)
+![README04](./img/README04.png)
 
 <br>
 
