@@ -77,8 +77,10 @@ Copyright (c) 2018 Yasunori Kirimoto
 ![README05](./img/README05.png)
 
 Leafletを手軽に始める
-- [Leaflet](http://leafletjs.com) 
-- [webpack](https://webpack.js.org) 
+- [Leaflet v1.3.4](http://leafletjs.com) 
+- [webpack v4.20.2](https://webpack.js.org)  
+- node v10.0.0
+- npm v6.4.1
 
 <br>
 
