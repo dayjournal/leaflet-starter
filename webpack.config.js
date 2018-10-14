@@ -1,6 +1,7 @@
-var webpack = require("webpack");
+const webpack = require("webpack");
 
 module.exports = {
+    mode: 'production',
     entry: './_resouce/main.js',
     output: {
         path: __dirname + '/dist',
@@ -24,11 +25,6 @@ module.exports = {
         ]
     },
     plugins: [
-        new webpack.optimize.UglifyJsPlugin({
-            compress: {
-                warnings: false
-            }
-        }),
         new webpack.ProvidePlugin({
             L: 'leaflet'
         })

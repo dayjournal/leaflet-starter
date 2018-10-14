@@ -5,8 +5,10 @@
 ![README05](./img/README05.png)
 
 Start Leaflet easily.  
-- [Leaflet](http://leafletjs.com) 
-- [webpack](https://webpack.js.org)  
+- [Leaflet v1.3.4](http://leafletjs.com) 
+- [webpack v4.20.2](https://webpack.js.org)  
+- node v10.0.0
+- npm v6.4.1
 
 <br>
 
@@ -56,7 +58,7 @@ npm run dev
 ## License
 MIT
 
-Copyright (c) 2017 Yasunori Kirimoto
+Copyright (c) 2018 Yasunori Kirimoto
 
 <br>
 
@@ -123,6 +125,6 @@ npm run dev
 ## ライセンス
 MIT
 
-Copyright (c) 2017 Yasunori Kirimoto
+Copyright (c) 2018 Yasunori Kirimoto
 
 <br>
