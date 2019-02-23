@@ -1,5 +1,5 @@
 //デフォルトアイコンパス
-L.Icon.Default.imagePath = './img/icon/';
+L.Icon.Default.imagePath = 'img/icon/';
 
 //MIERUNE Color読み込み
 var m_color = new L.tileLayer('https://tile.mierune.co.jp/mierune/{z}/{x}/{y}.png', {
