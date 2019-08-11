@@ -1,6 +1,6 @@
 {
   "name": "leaflet-starter",
-  "version": "1.2.0",
+  "version": "1.5.1",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -11,9 +11,9 @@
   "author": "Yasunori Kirimoto",
   "license": "ISC",
   "devDependencies": {
-    "webpack": "^4.32.2",
-    "webpack-cli": "^3.3.2",
-    "webpack-dev-server": "^3.4.1"
+    "webpack": "^4.39.1",
+    "webpack-cli": "^3.3.6",
+    "webpack-dev-server": "^3.8.0"
   },
   "dependencies": {
     "css-loader": "^1.0.1",
