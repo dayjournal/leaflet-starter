@@ -5,10 +5,10 @@
 ![README05](img/README05.png)
 
 Start Leaflet easily.  
-- [Leaflet v1.5.1](http://leafletjs.com) 
+- [Leaflet v1.6.0](http://leafletjs.com) 
 - [webpack v4.39.1](https://webpack.js.org)  
-- node v12.7.0
-- npm v6.10.0
+- node v13.1.0
+- npm v6.13.2
 
 <br>
 
@@ -77,10 +77,10 @@ Copyright (c) 2019 Yasunori Kirimoto
 ![README05](img/README05.png)
 
 Leafletを手軽に始める
-- [Leaflet v1.5.1](http://leafletjs.com) 
+- [Leaflet v1.6.0](http://leafletjs.com) 
 - [webpack v4.39.1](https://webpack.js.org)  
-- node v12.7.0
-- npm v6.10.0
+- node v13.1.0
+- npm v6.13.2
 
 <br>
 

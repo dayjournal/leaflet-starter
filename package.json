@@ -1,6 +1,6 @@
 {
   "name": "leaflet-starter",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -18,7 +18,7 @@
   "dependencies": {
     "css-loader": "^1.0.1",
     "file-loader": "^2.0.0",
-    "leaflet": "^1.5.1",
+    "leaflet": "^1.6.0",
     "style-loader": "^0.23.1",
     "url-loader": "^1.1.2"
   }
