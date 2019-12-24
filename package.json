@@ -11,15 +11,15 @@
   "author": "Yasunori Kirimoto",
   "license": "ISC",
   "devDependencies": {
-    "webpack": "^4.39.1",
-    "webpack-cli": "^3.3.6",
-    "webpack-dev-server": "^3.8.0"
+    "webpack": "^4.41.4",
+    "webpack-cli": "^3.3.10",
+    "webpack-dev-server": "^3.10.1"
   },
   "dependencies": {
-    "css-loader": "^1.0.1",
-    "file-loader": "^2.0.0",
+    "css-loader": "^3.4.0",
+    "file-loader": "^5.0.2",
     "leaflet": "^1.6.0",
-    "style-loader": "^0.23.1",
-    "url-loader": "^1.1.2"
+    "style-loader": "^1.1.1",
+    "url-loader": "^3.0.0"
   }
 }

@@ -6,7 +6,7 @@
 
 Start Leaflet easily.  
 - [Leaflet v1.6.0](http://leafletjs.com) 
-- [webpack v4.39.1](https://webpack.js.org)  
+- [webpack v4.41.4](https://webpack.js.org)  
 - node v13.1.0
 - npm v6.13.2
 
@@ -78,7 +78,7 @@ Copyright (c) 2019 Yasunori Kirimoto
 
 Leafletを手軽に始める
 - [Leaflet v1.6.0](http://leafletjs.com) 
-- [webpack v4.39.1](https://webpack.js.org)  
+- [webpack v4.41.4](https://webpack.js.org)  
 - node v13.1.0
 - npm v6.13.2
 
