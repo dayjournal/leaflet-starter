@@ -5,10 +5,10 @@
 ![README05](img/README05.png)
 
 Start Leaflet easily.  
-- [Leaflet v1.6.0](http://leafletjs.com) 
-- [webpack v4.41.4](https://webpack.js.org)  
-- node v13.1.0
-- npm v6.13.2
+- [Leaflet v1.7.1](http://leafletjs.com) 
+- [webpack v5.11.1](https://webpack.js.org)  
+- node v15.5.0
+- npm v7.3.0
 
 <br>
 
@@ -19,31 +19,22 @@ Start Leaflet easily.
 <br>
 
 Install package
-
-```
-
+```bash
 npm install
-
 ```
 
 <br>
 
 build
-
-```
-
+```bash
 npm run build
-
 ```
 
 <br>
 
 dev
-
-```
-
+```bash
 npm run dev
-
 ```
 
 ---
@@ -58,7 +49,7 @@ npm run dev
 ## License
 MIT
 
-Copyright (c) 2019 Yasunori Kirimoto
+Copyright (c) 2018-2021 Yasunori Kirimoto
 
 <br>
 
@@ -77,10 +68,10 @@ Copyright (c) 2019 Yasunori Kirimoto
 ![README05](img/README05.png)
 
 Leafletを手軽に始める
-- [Leaflet v1.6.0](http://leafletjs.com) 
-- [webpack v4.41.4](https://webpack.js.org)  
-- node v13.1.0
-- npm v6.13.2
+- [Leaflet v1.7.1](http://leafletjs.com) 
+- [webpack v5.11.1](https://webpack.js.org)  
+- node v15.5.0
+- npm v7.3.0
 
 <br>
 
@@ -92,29 +83,24 @@ Leafletを手軽に始める
 
 パッケージインストール
 
-```
-
+```bash
 npm install
-
 ```
 
 <br>
 
 ビルド
 
-```
-
+```bash
 npm run build
-
 ```
 
 <br>
 
 開発
 
-```
+```bash
 npm run dev
-
 ```
 
 <br>
@@ -127,6 +113,6 @@ npm run dev
 ## ライセンス
 MIT
 
-Copyright (c) 2019 Yasunori Kirimoto
+Copyright (c) 2018-2021 Yasunori Kirimoto
 
 <br>

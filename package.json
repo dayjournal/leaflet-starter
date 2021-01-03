@@ -1,25 +1,26 @@
 {
   "name": "leaflet-starter",
-  "version": "1.6.0",
+  "version": "1.7.1",
   "description": "",
   "main": "main.js",
   "scripts": {
-    "build": "webpack",
-    "dev": "webpack-dev-server"
+    "build": "webpack --mode=production",
+    "dev": "webpack serve --mode=development"
   },
   "keywords": [],
   "author": "Yasunori Kirimoto",
   "license": "ISC",
   "devDependencies": {
-    "webpack": "^4.41.4",
-    "webpack-cli": "^3.3.10",
-    "webpack-dev-server": "^3.10.1"
+    "webpack": "^5.11.1",
+    "webpack-cli": "^4.3.1",
+    "webpack-dev-server": "^3.11.1"
   },
   "dependencies": {
-    "css-loader": "^3.4.0",
-    "file-loader": "^5.0.2",
-    "leaflet": "^1.6.0",
-    "style-loader": "^1.1.1",
-    "url-loader": "^3.0.0"
-  }
+    "css-loader": "^5.0.1",
+    "file-loader": "^6.2.0",
+    "leaflet": "^1.7.1",
+    "style-loader": "^2.0.0",
+    "url-loader": "^4.1.1"
+  },
+  "private": true
 }

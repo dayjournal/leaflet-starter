@@ -1,10 +1,4 @@
 .DS_Store
 node_modules/
 .node-version
-.idea/dictionaries/MIERUNE_PC.xml
-.idea/leaflet-starter.iml
-.idea/misc.xml
-.idea/modules.xml
-.idea/vcs.xml
-.idea/workspace.xml
-.python-version
+yarn.lock
