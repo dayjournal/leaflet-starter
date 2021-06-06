@@ -11,12 +11,12 @@
   "author": "Yasunori Kirimoto",
   "license": "ISC",
   "devDependencies": {
-    "webpack": "^5.11.1",
-    "webpack-cli": "^4.3.1",
-    "webpack-dev-server": "^3.11.1"
+    "webpack": "^5.38.1",
+    "webpack-cli": "^4.7.0",
+    "webpack-dev-server": "^3.11.2"
   },
   "dependencies": {
-    "css-loader": "^5.0.1",
+    "css-loader": "^5.2.6",
     "file-loader": "^6.2.0",
     "leaflet": "^1.7.1",
     "style-loader": "^2.0.0",
