@@ -2,19 +2,18 @@
 
 ![README02](img/README02.png)
 
-![README05](img/README05.png)
-
 Start Leaflet easily.  
-- [Leaflet v1.7.1](http://leafletjs.com) 
-- [webpack v5.38.1](https://webpack.js.org)  
-- node v16.3.0
-- npm v7.15.1
+- [Leaflet v1.8.0](http://leafletjs.com)  
+- [TypeScript v4.5.4](https://www.typescriptlang.org)  
+- [Vite v2.9.9](https://vitejs.dev)  
+- node v18.1.0
+- npm v8.8.0
 
 <br>
 
 ## Usage
 
-![README04](img/README04.png)
+![README03](img/README03.png)
 
 <br>
 
@@ -49,7 +48,7 @@ npm run dev
 ## License
 MIT
 
-Copyright (c) 2018-2021 Yasunori Kirimoto
+Copyright (c) 2018-2022 Yasunori Kirimoto
 
 <br>
 
@@ -65,19 +64,18 @@ Copyright (c) 2018-2021 Yasunori Kirimoto
 
 ![README02](img/README02.png)
 
-![README05](img/README05.png)
-
 Leafletを手軽に始める
-- [Leaflet v1.7.1](http://leafletjs.com) 
-- [webpack v5.38.1](https://webpack.js.org)  
-- node v16.3.0
-- npm v7.15.1
+- [Leaflet v1.8.0](http://leafletjs.com)  
+- [TypeScript v4.5.4](https://www.typescriptlang.org)  
+- [Vite v2.9.9](https://vitejs.dev)  
+- node v18.1.0
+- npm v8.8.0
 
 <br>
 
 ##  使用方法
 
-![README04](img/README04.png)
+![README03](img/README03.png)
 
 <br>
 
@@ -113,6 +111,6 @@ npm run dev
 ## ライセンス
 MIT
 
-Copyright (c) 2018-2021 Yasunori Kirimoto
+Copyright (c) 2018-2022 Yasunori Kirimoto
 
 <br>
