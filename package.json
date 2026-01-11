@@ -9,10 +9,10 @@
   },
   "keywords": [],
   "author": "Yasunori Kirimoto",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.1.6",
-    "vite": "^5.4.21"
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.3",
