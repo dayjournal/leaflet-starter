@@ -5,17 +5,20 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:ghpages": "VITE_BASE=/leaflet-starter/ VITE_OUTDIR=docs npm run build",
     "preview": "vite preview"
   },
   "keywords": [],
   "author": "Yasunori Kirimoto",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/leaflet": "^1.9.3",
+    "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "@types/leaflet": "^1.9.3",
     "leaflet": "^1.9.4"
   }
 }

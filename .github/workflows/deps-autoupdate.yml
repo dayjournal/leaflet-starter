@@ -1,0 +1,211 @@
+name: Dependency Auto Update
+
+"on":
+  schedule:
+    - cron: "0 21 * * *" # 6:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: deps-autoupdate
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install deps (base)
+        run: npm ci
+
+      - name: Build (base)
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Baseline screenshots from current main
+        run: npx playwright test e2e/visual.spec.ts --update-snapshots
+
+      - name: Check & update leaflet/typescript/vite
+        id: deps
+        continue-on-error: true
+        run: node .github/scripts/deps-check-and-update.mjs
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stop if nothing changed
+        if: steps.changes.outputs.changed != 'true'
+        run: echo "No updates found. Done."
+
+      - name: Build (updated)
+        id: build_updated
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        run: npm run build
+
+      - name: Visual regression (compare vs baseline)
+        id: visual
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        run: npx playwright test e2e/visual.spec.ts
+
+      - name: Collect visual diff images
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          mkdir -p artifacts/visual-diff
+          # expected (baseline)
+          # Playwright stores the snapshot under a "*-snapshots" directory next to the test.
+          EXPECTED="$(find . -type f -path '*-snapshots/*' \
+            \( -name 'map.png' -o -name 'map-*.png' -o -name 'map*.png' \) 2>/dev/null | head -n 1 || true)"
+          if [ -z "$EXPECTED" ]; then
+            EXPECTED="$(find test-results -type f -name '*-expected.png' 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -n "$EXPECTED" ]; then
+            cp "$EXPECTED" artifacts/visual-diff/map-expected.png
+          fi
+
+          # actual/diff (created when visual test fails)
+          ACTUAL="$(find test-results -type f -name '*-actual.png' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$ACTUAL" ]; then
+            cp "$ACTUAL" artifacts/visual-diff/map-actual.png
+          fi
+
+          DIFF="$(find test-results -type f -name '*-diff.png' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$DIFF" ]; then
+            cp "$DIFF" artifacts/visual-diff/map-diff.png
+          fi
+
+          echo "Collected files:"
+          ls -la artifacts/visual-diff || true
+
+      - name: Upload artifacts
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-update-artifacts
+          path: |
+            artifacts/
+            test-results/
+            playwright-report/
+            .playwright-snapshots/
+          if-no-files-found: ignore
+
+      - name: Compose PR body
+        id: prbody
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const jsonPath = path.join('artifacts','deps-update.json');
+          const p = fs.existsSync(jsonPath)
+            ? JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
+            : { changed: true, install_ok: false, current: {}, latest: {} };
+          const lines = [];
+          lines.push('Automated dependency update (scheduled job).');
+          lines.push('');
+          lines.push('## Updated');
+          for (const k of ['leaflet','typescript','vite']) {
+            if (p.current?.[k] && p.latest?.[k]) {
+              lines.push(`- ${k}: ${p.current[k]} → ${p.latest[k]}`);
+            }
+          }
+          lines.push('');
+          lines.push('## Project version');
+          if (p.prev_version && p.next_version) lines.push(`- ${p.prev_version} → ${p.next_version}`);
+          lines.push('');
+          lines.push('## Checks');
+          lines.push(`- npm install: ${p.install_ok ? 'OK' : 'FAILED'}`);
+          lines.push(`- build: ${process.env.BUILD_OUTCOME || 'unknown'}`);
+          lines.push(`- visual: ${process.env.VISUAL_OUTCOME || 'unknown'}`);
+          lines.push('');
+          // Visual diff images (committed into the PR branch)
+          const diffDir = path.join('artifacts','visual-diff');
+          const expected = path.join(diffDir,'map-expected.png');
+          const actual = path.join(diffDir,'map-actual.png');
+          const diff = path.join(diffDir,'map-diff.png');
+          const rel = (p) => p.split(path.sep).join('/');
+          const hasVisual = [expected, actual, diff].some((p) => fs.existsSync(p));
+          if (hasVisual) {
+            lines.push('## Visual diff');
+            if (fs.existsSync(expected)) { lines.push('### expected'); lines.push(`![](${rel(expected)})`); lines.push(''); }
+            if (fs.existsSync(actual))   { lines.push('### actual');   lines.push(`![](${rel(actual)})`);   lines.push(''); }
+            if (fs.existsSync(diff))     { lines.push('### diff');     lines.push(`![](${rel(diff)})`);     lines.push(''); }
+          }
+          lines.push('Artifacts (logs / reports / diffs) are attached to the workflow run.');
+
+          fs.writeFileSync('artifacts/pr-body.md', lines.join('\n') + '\n');
+          NODE
+          echo "body_path=artifacts/pr-body.md" >> $GITHUB_OUTPUT
+        env:
+          BUILD_OUTCOME: ${{ steps.build_updated.outcome }}
+          VISUAL_OUTCOME: ${{ steps.visual.outcome }}
+
+
+      - name: Check PR token configuration
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          if [ -z "$PR_TOKEN" ]; then
+            echo "::warning::PR_TOKEN is not set. If PR creation fails with 'GitHub Actions is not permitted to create or approve pull requests', either (1) enable repository setting 'Allow GitHub Actions to create and approve pull requests' or (2) set secrets.PR_TOKEN to a fine-grained PAT with Pull requests write."
+          fi
+        env:
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+      - name: Restore workflows (avoid workflows permission)
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          # Ensure no changes under .github/workflows are included in the PR branch.
+          git checkout -- .github/workflows || true
+
+
+
+      - name: Create Pull Request
+        id: cpr
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@v6
+        with:
+          # If the repository setting "Allow GitHub Actions to create and approve pull requests" is disabled,
+          # the default GITHUB_TOKEN cannot open a PR. In that case, provide a fine-grained PAT as PR_TOKEN.
+          token: ${{ secrets.PR_TOKEN || github.token }}
+          branch: bot/deps-update
+          delete-branch: true
+          title: "chore: bump deps (leaflet/typescript/vite)"
+          commit-message: "chore: bump deps (leaflet/typescript/vite)"
+          body-path: artifacts/pr-body.md
+          labels: dependencies
+          add-paths: |
+            package.json
+            package-lock.json
+            README.md
+            artifacts/deps-update.json
+            artifacts/pr-body.md
+            artifacts/visual-diff/**
+
+
+      - name: Fail if PR was not created
+        if: steps.changes.outputs.changed == 'true' && (steps.cpr.outcome != 'success' || steps.cpr.outputs.pull-request-number == '')
+        run: |
+          echo "::error::Failed to create a pull request. Enable repository setting 'Allow GitHub Actions to create and approve pull requests' OR set secrets.PR_TOKEN (fine-grained PAT with Pull requests write)."
+          exit 1
