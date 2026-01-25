@@ -1,5 +1,16 @@
 {
   "changed": false,
-  "current": {},
-  "latest": {}
+  "current": {
+    "leaflet": "1.9.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  },
+  "latest": {
+    "leaflet": "1.9.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  },
+  "install_ok": true,
+  "build_ok": null,
+  "visual_ok": null
 }
