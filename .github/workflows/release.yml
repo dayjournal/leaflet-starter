@@ -1,0 +1,71 @@
+name: Release
+
+"on":
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Read versions from package.json
+        id: v
+        run: |
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const p = require('./package.json');
+          const norm = (s) => String(s || '').replace(/^[^\d]*/, '');
+          console.log(`version=${p.version}`);
+          console.log(`leaflet=${norm(p.dependencies?.leaflet)}`);
+          console.log(`typescript=${norm(p.devDependencies?.typescript)}`);
+          console.log(`vite=${norm(p.devDependencies?.vite)}`);
+          NODE
+
+      - name: Check tag existence
+        id: tag
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag
+        if: steps.tag.outputs.exists != 'true'
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        if: steps.tag.outputs.exists != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: v${{ steps.v.outputs.version }}
+          body: |
+            - Leaflet v${{ steps.v.outputs.leaflet }}
+            - TypeScript v${{ steps.v.outputs.typescript }}
+            - Vite v${{ steps.v.outputs.vite }}

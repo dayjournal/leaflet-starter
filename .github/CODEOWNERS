@@ -1,0 +1,12 @@
+# CODEOWNERS helps enforce human review when branch protection enables
+# "Require review from Code Owners".
+#
+# NOTE: Enabling the repository setting "Allow GitHub Actions to create and approve pull requests"
+# allows the workflow bot to open PRs. To ensure a human must approve, enable
+# branch protection with "Require review from Code Owners" and keep this file
+# pointing to a human account.
+
+* @dayjournal
+
+# Extra safety: changes to workflows should always be reviewed by a human.
+.github/workflows/* @dayjournal
