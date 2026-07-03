@@ -15,18 +15,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes; keep the token out of .git/config while
+          # building and testing PR code.
+          persist-credentials: false
+
+      # Installs the pnpm version pinned in package.json's packageManager
+      # field. Third-party action pinned to a commit SHA (v4).
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
-      - run: npm run build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
 
       # E2E smoke (no snapshot baseline required)
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Smoke test
-        run: npx playwright test e2e/smoke.spec.ts
+        run: pnpm exec playwright test e2e/smoke.spec.ts
