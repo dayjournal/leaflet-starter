@@ -1,0 +1,15 @@
+# pnpm and .github/scripts/deps-check-and-update.mjs rewrite this with
+# 2-space JSON — keep prettier's 4-space tabWidth away from it.
+# (pnpm-lock.yaml / pnpm-workspace.yaml are covered by the *.yaml rule below.)
+package.json
+
+# Workflows follow the GitHub Actions 2-space YAML convention.
+*.yml
+*.yaml
+
+# README relies on trailing-space hard line breaks and hand-tuned spacing.
+*.md
+
+# Build outputs
+dist/
+artifacts/

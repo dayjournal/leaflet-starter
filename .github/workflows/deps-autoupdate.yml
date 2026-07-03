@@ -1,14 +1,28 @@
 name: Dependency Auto Update
 
+# Daily flow: detect newer leaflet/typescript/vite versions, gate each group
+# with build + e2e (visual diff vs pre-update main + runtime error check),
+# open a PR with the passing updates, and notify Slack. A human merges the PR;
+# CI then runs on main, the Release workflow tags + publishes, and the Pages
+# workflow redeploys the demo — all automatically.
+# On failure nothing is pushed anywhere — Slack gets the details.
+# Quiet days send nothing, except a heartbeat every 10th day proving the
+# schedule is still alive.
+
 "on":
   schedule:
     - cron: "0 21 * * *" # 6:00 JST
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run all checks but skip PR creation"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write
+  actions: write # keepalive re-enables this schedule via API
 
 concurrency:
   group: deps-autoupdate
@@ -22,86 +36,75 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Resolve main at fetch time, not event time: a queued run must not
+          # re-apply updates that a previous run already turned into a PR.
+          ref: main
           fetch-depth: 0
+          # This job builds and tests freshly-updated third-party code; do not
+          # leave the contents:write token in .git/config where that code
+          # could read it. Create Pull Request pushes with its own token input.
+          persist-credentials: false
+
+      # Installs the pnpm version pinned in package.json's packageManager
+      # field. Third-party action pinned to a commit SHA (v4).
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: npm
+          cache: pnpm
 
       - name: Install deps (base)
-        run: npm ci
+        id: install_base
+        run: pnpm install --frozen-lockfile
 
       - name: Build (base)
-        run: npm run build
+        id: build_base
+        run: pnpm run build
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        id: browsers
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Baseline screenshots from current main
-        run: npx playwright test e2e/visual.spec.ts --update-snapshots
+        id: baseline
+        run: pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
 
-      - name: Check & update leaflet/typescript/vite
-        id: deps
-        continue-on-error: true
+      # Updates each dependency group, gates it with build + e2e (rolling back
+      # groups that fail), bumps the project version, rewrites README versions,
+      # and writes artifacts/pr-body.md. Emits step outputs: changed / delta /
+      # prev_version / next_version / updated_packages / failed_groups.
+      - name: Update dependencies
+        id: update
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node .github/scripts/deps-check-and-update.mjs
 
-      - name: Detect changes
-        id: changes
-        run: |
-          if git diff --quiet; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Stop if nothing changed
-        if: steps.changes.outputs.changed != 'true'
-        run: echo "No updates found. Done."
-
-      - name: Build (updated)
-        id: build_updated
-        if: steps.changes.outputs.changed == 'true'
-        continue-on-error: true
-        run: npm run build
-
-      - name: Visual regression (compare vs baseline)
-        id: visual
-        if: steps.changes.outputs.changed == 'true'
-        continue-on-error: true
-        run: npx playwright test e2e/visual.spec.ts
-
-      - name: Collect visual diff images
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          mkdir -p artifacts/visual-diff
-          # expected (baseline)
-          # Playwright stores the snapshot under a "*-snapshots" directory next to the test.
-          EXPECTED="$(find . -type f -path '*-snapshots/*' \
-            \( -name 'map.png' -o -name 'map-*.png' -o -name 'map*.png' \) 2>/dev/null | head -n 1 || true)"
-          if [ -z "$EXPECTED" ]; then
-            EXPECTED="$(find test-results -type f -name '*-expected.png' 2>/dev/null | head -n 1 || true)"
-          fi
-          if [ -n "$EXPECTED" ]; then
-            cp "$EXPECTED" artifacts/visual-diff/map-expected.png
-          fi
-
-          # actual/diff (created when visual test fails)
-          ACTUAL="$(find test-results -type f -name '*-actual.png' 2>/dev/null | head -n 1 || true)"
-          if [ -n "$ACTUAL" ]; then
-            cp "$ACTUAL" artifacts/visual-diff/map-actual.png
-          fi
-
-          DIFF="$(find test-results -type f -name '*-diff.png' 2>/dev/null | head -n 1 || true)"
-          if [ -n "$DIFF" ]; then
-            cp "$DIFF" artifacts/visual-diff/map-diff.png
-          fi
-
-          echo "Collected files:"
-          ls -la artifacts/visual-diff || true
+      - name: Create Pull Request
+        id: cpr
+        if: steps.update.outputs.changed == 'true' && inputs.dry_run != true
+        # Third-party action pinned to a commit SHA (v6) — this workflow's
+        # token can write contents, so a hijacked tag must not be able to
+        # swap the code underneath us.
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c
+        with:
+          # github.token works because "Allow GitHub Actions to create and
+          # approve pull requests" is enabled. Set secrets.PR_TOKEN (fine-
+          # grained PAT) only if CI should also run on the bot PR.
+          token: ${{ secrets.PR_TOKEN || github.token }}
+          branch: bot/deps-update
+          delete-branch: true
+          title: "chore: bump deps to v${{ steps.update.outputs.next_version }} (${{ steps.update.outputs.delta }})"
+          commit-message: "chore: bump deps to v${{ steps.update.outputs.next_version }} (${{ steps.update.outputs.delta }})"
+          body-path: artifacts/pr-body.md
+          labels: dependencies
+          add-paths: |
+            package.json
+            pnpm-lock.yaml
+            README.md
 
       - name: Upload artifacts
-        if: steps.changes.outputs.changed == 'true'
+        if: ${{ always() && (failure() || steps.update.outputs.changed == 'true' || steps.update.outputs.failed_groups != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: deps-update-artifacts
@@ -111,101 +114,43 @@ jobs:
             playwright-report/
             .playwright-snapshots/
           if-no-files-found: ignore
+          retention-days: 14
 
-      - name: Compose PR body
-        id: prbody
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = require('path');
-          const jsonPath = path.join('artifacts','deps-update.json');
-          const p = fs.existsSync(jsonPath)
-            ? JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
-            : { changed: true, install_ok: false, current: {}, latest: {} };
-          const lines = [];
-          lines.push('Automated dependency update (scheduled job).');
-          lines.push('');
-          lines.push('## Updated');
-          for (const k of ['leaflet','typescript','vite']) {
-            if (p.current?.[k] && p.latest?.[k]) {
-              lines.push(`- ${k}: ${p.current[k]} → ${p.latest[k]}`);
-            }
-          }
-          lines.push('');
-          lines.push('## Project version');
-          if (p.prev_version && p.next_version) lines.push(`- ${p.prev_version} → ${p.next_version}`);
-          lines.push('');
-          lines.push('## Checks');
-          lines.push(`- npm install: ${p.install_ok ? 'OK' : 'FAILED'}`);
-          lines.push(`- build: ${process.env.BUILD_OUTCOME || 'unknown'}`);
-          lines.push(`- visual: ${process.env.VISUAL_OUTCOME || 'unknown'}`);
-          lines.push('');
-          // Visual diff images (committed into the PR branch)
-          const diffDir = path.join('artifacts','visual-diff');
-          const expected = path.join(diffDir,'map-expected.png');
-          const actual = path.join(diffDir,'map-actual.png');
-          const diff = path.join(diffDir,'map-diff.png');
-          const rel = (p) => p.split(path.sep).join('/');
-          const hasVisual = [expected, actual, diff].some((p) => fs.existsSync(p));
-          if (hasVisual) {
-            lines.push('## Visual diff');
-            if (fs.existsSync(expected)) { lines.push('### expected'); lines.push(`![](${rel(expected)})`); lines.push(''); }
-            if (fs.existsSync(actual))   { lines.push('### actual');   lines.push(`![](${rel(actual)})`);   lines.push(''); }
-            if (fs.existsSync(diff))     { lines.push('### diff');     lines.push(`![](${rel(diff)})`);     lines.push(''); }
-          }
-          lines.push('Artifacts (logs / reports / diffs) are attached to the workflow run.');
-
-          fs.writeFileSync('artifacts/pr-body.md', lines.join('\n') + '\n');
-          NODE
-          echo "body_path=artifacts/pr-body.md" >> $GITHUB_OUTPUT
+      # Message logic (including the 10-day heartbeat) lives in
+      # .github/scripts/notify-slack.sh; this step only maps step results
+      # into its environment.
+      - name: Notify Slack
+        if: always()
         env:
-          BUILD_OUTCOME: ${{ steps.build_updated.outcome }}
-          VISUAL_OUTCOME: ${{ steps.visual.outcome }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          CHANGED: ${{ steps.update.outputs.changed }}
+          DELTA: ${{ steps.update.outputs.delta }}
+          NEXT_VERSION: ${{ steps.update.outputs.next_version }}
+          FAILED_GROUPS: ${{ steps.update.outputs.failed_groups }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          O_INSTALL_BASE: ${{ steps.install_base.outcome }}
+          O_BUILD_BASE: ${{ steps.build_base.outcome }}
+          O_BROWSERS: ${{ steps.browsers.outcome }}
+          O_BASELINE: ${{ steps.baseline.outcome }}
+          O_UPDATE: ${{ steps.update.outcome }}
+          O_CPR: ${{ steps.cpr.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/notify-slack.sh
 
-
-      - name: Check PR token configuration
-        if: steps.changes.outputs.changed == 'true'
+      - name: Fail run if some groups were excluded
+        if: steps.update.outputs.failed_groups != ''
         run: |
-          if [ -z "$PR_TOKEN" ]; then
-            echo "::warning::PR_TOKEN is not set. If PR creation fails with 'GitHub Actions is not permitted to create or approve pull requests', either (1) enable repository setting 'Allow GitHub Actions to create and approve pull requests' or (2) set secrets.PR_TOKEN to a fine-grained PAT with Pull requests write."
-          fi
-        env:
-          PR_TOKEN: ${{ secrets.PR_TOKEN }}
-      - name: Restore workflows (avoid workflows permission)
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          # Ensure no changes under .github/workflows are included in the PR branch.
-          git checkout -- .github/workflows || true
-
-
-
-      - name: Create Pull Request
-        id: cpr
-        if: steps.changes.outputs.changed == 'true'
-        continue-on-error: true
-        uses: peter-evans/create-pull-request@v6
-        with:
-          # If the repository setting "Allow GitHub Actions to create and approve pull requests" is disabled,
-          # the default GITHUB_TOKEN cannot open a PR. In that case, provide a fine-grained PAT as PR_TOKEN.
-          token: ${{ secrets.PR_TOKEN || github.token }}
-          branch: bot/deps-update
-          delete-branch: true
-          title: "chore: bump deps (leaflet/typescript/vite)"
-          commit-message: "chore: bump deps (leaflet/typescript/vite)"
-          body-path: artifacts/pr-body.md
-          labels: dependencies
-          add-paths: |
-            package.json
-            package-lock.json
-            README.md
-            artifacts/deps-update.json
-            artifacts/pr-body.md
-            artifacts/visual-diff/**
-
-
-      - name: Fail if PR was not created
-        if: steps.changes.outputs.changed == 'true' && (steps.cpr.outcome != 'success' || steps.cpr.outputs.pull-request-number == '')
-        run: |
-          echo "::error::Failed to create a pull request. Enable repository setting 'Allow GitHub Actions to create and approve pull requests' OR set secrets.PR_TOKEN (fine-grained PAT with Pull requests write)."
+          echo "::error::Dependency groups failed checks: ${{ steps.update.outputs.failed_groups }}"
           exit 1
+
+      # GitHub disables cron workflows after 60 days without repo activity;
+      # re-enabling this workflow via the Actions API resets that timer.
+      - name: Keepalive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method PUT \
+            "repos/${{ github.repository }}/actions/workflows/deps-autoupdate.yml/enable" \
+            || echo "::warning::Keepalive failed; the schedule may be disabled after 60 idle days"

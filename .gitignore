@@ -27,3 +27,6 @@ dist-ssr
 playwright-report/
 test-results/
 .playwright-snapshots/
+
+# Workflow outputs (uploaded as run artifacts, never committed)
+artifacts/

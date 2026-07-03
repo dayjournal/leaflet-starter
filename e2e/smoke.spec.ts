@@ -1,11 +1,22 @@
-import { test, expect, stabilizeTileRequests } from './_helpers';
+import {
+    test,
+    expect,
+    stabilizeTileRequests,
+    expectValidTileRequests,
+    MAP_READY_TIMEOUT_MS,
+} from './_helpers';
 
-test('smoke: page loads and map container exists', async ({ page }) => {
-  await stabilizeTileRequests(page);
+test('smoke: page loads, Leaflet initializes, and tile URLs are well-formed', async ({ page }) => {
+    const tileUrls = await stabilizeTileRequests(page);
 
-  await page.goto('/');
-  await expect(page.locator('#map')).toBeVisible();
+    await page.goto('/');
+    await expect(page.locator('#map')).toBeVisible();
 
-  // Leaflet creates a container with .leaflet-container class inside the map element.
-  await expect(page.locator('#map.leaflet-container')).toBeVisible({ timeout: 15_000 });
+    // L.map('map') adds the .leaflet-container class to #map itself, so this
+    // selector only matches once Leaflet has initialized on the container.
+    await expect(page.locator('#map.leaflet-container')).toBeVisible({
+        timeout: MAP_READY_TIMEOUT_MS,
+    });
+
+    await expectValidTileRequests(tileUrls);
 });

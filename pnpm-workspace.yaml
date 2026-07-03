@@ -1,0 +1,23 @@
+# pnpm supply-chain settings (single-package repo; no `packages` list needed).
+
+# Refuse versions published less than 7 days ago, so a compromised release can
+# be yanked before it ever lands here. Keep in sync with MIN_AGE_DAYS in
+# .github/scripts/deps-check-and-update.mjs — the daily update flow picks
+# versions with the same age rule, so the two gates always agree.
+minimumReleaseAge: 10080 # minutes = 7 days
+
+# Fail install when a dependency has a build script we haven't reviewed.
+# Review a package's scripts before adding it below; `true` runs them,
+# `false` records "reviewed, keep blocked".
+strictDepBuilds: true
+allowBuilds:
+  # esbuild gets its binary via optionalDependencies; its postinstall is only
+  # a fallback/optimization, so keep it blocked.
+  esbuild: false
+  # fsevents (macOS-only, optional) ships prebuilt binaries; keep blocked.
+  fsevents: false
+
+# Refuse a release whose trust level (provenance / trusted publishing)
+# dropped compared to earlier releases. If this ever blocks the daily update,
+# investigate the package first; only flip to "off" as a temporary escape.
+trustPolicy: no-downgrade

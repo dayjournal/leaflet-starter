@@ -19,11 +19,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
+          # Credentials stay persisted on purpose: the Create tag step pushes
+          # with them, and this job runs no third-party project code.
+          persist-credentials: true
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: npm
 
       - name: Configure git identity
         run: |
@@ -32,15 +34,7 @@ jobs:
 
       - name: Read versions from package.json
         id: v
-        run: |
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const p = require('./package.json');
-          const norm = (s) => String(s || '').replace(/^[^\d]*/, '');
-          console.log(`version=${p.version}`);
-          console.log(`leaflet=${norm(p.dependencies?.leaflet)}`);
-          console.log(`typescript=${norm(p.devDependencies?.typescript)}`);
-          console.log(`vite=${norm(p.devDependencies?.vite)}`);
-          NODE
+        run: node .github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
 
       - name: Check tag existence
         id: tag
@@ -61,7 +55,9 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.tag.outputs.exists != 'true'
-        uses: softprops/action-gh-release@v2
+        # Third-party action pinned to a commit SHA (v2); it runs with a
+        # contents:write token.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: v${{ steps.v.outputs.version }}
