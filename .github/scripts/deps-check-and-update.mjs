@@ -139,7 +139,9 @@ function ageCutoff() {
 
 // Returns the name of the first failing stage, or null if everything passed.
 function installAndTest() {
-    if (!tryRun('pnpm install')) return 'install';
+    // --no-frozen-lockfile: pnpm defaults frozen-lockfile to true on CI, but
+    // this script has just changed package.json on purpose.
+    if (!tryRun('pnpm install --no-frozen-lockfile')) return 'install';
     if (!tryRun('pnpm run build')) return 'build';
     if (!tryRun('pnpm exec playwright test')) return 'e2e';
     return null;
@@ -193,7 +195,8 @@ function finalize(prevVersion, applied, failedGroups) {
     pkg.version = nextVersion;
     writePkg(pkg);
     // Sync the version field into the lockfile without touching node_modules.
-    run('pnpm install --lockfile-only');
+    // --no-frozen-lockfile: see installAndTest().
+    run('pnpm install --lockfile-only --no-frozen-lockfile');
 
     updateReadmeVersions(pkg);
     writePrBody(applied, prevVersion, nextVersion, failedGroups);
