@@ -7,6 +7,11 @@
 // the PR body plus GitHub Actions step outputs (changed / delta /
 // prev_version / next_version / updated_packages / failed_groups).
 //
+// Project version rule: a Leaflet update adopts the Leaflet version itself
+// (1.9.4 -> 1.9.5); any other update increments a fourth segment on top of
+// the current version (1.9.4 -> 1.9.4.1 -> 1.9.4.2). The fourth segment is
+// not semver — fine for git tags and this unpublished package.
+//
 // Run locally: first create the visual baselines the e2e gate diffs against
 // (pnpm exec playwright test e2e/visual.spec.ts --update-snapshots), then
 // node .github/scripts/deps-check-and-update.mjs
@@ -182,13 +187,14 @@ function finalize(prevVersion, applied, failedGroups) {
         return;
     }
 
-    // Adopt the Leaflet version when Leaflet changed, otherwise bump the patch.
-    // Never move backward (a Leaflet patch release arriving after unrelated
-    // bumps must not collide with an existing tag).
+    // Adopt the Leaflet version when Leaflet changed, otherwise increment the
+    // fourth segment (see the header). Never move backward (a Leaflet patch
+    // release arriving after unrelated bumps must not collide with an
+    // existing tag).
     const leafletUpdate = applied.find((u) => u.name === 'leaflet');
-    let nextVersion = leafletUpdate ? leafletUpdate.to : bumpPatch(prevVersion);
-    if (compareVersions(nextVersion, prevVersion) <= 0) {
-        nextVersion = bumpPatch(prevVersion);
+    let nextVersion = leafletUpdate ? leafletUpdate.to : bumpFourth(prevVersion);
+    if (compareProjectVersions(nextVersion, prevVersion) <= 0) {
+        nextVersion = bumpFourth(prevVersion);
     }
 
     const pkg = readPkg();
@@ -240,6 +246,24 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
         '- build (tsc + vite): OK',
         '- e2e smoke + visual diff vs pre-update main + runtime error check: OK',
     ];
+    // Both images live in this repo (no external hosting). The "after" link
+    // dies when the bot branch is deleted on merge — at which point main's
+    // image IS the after state. Keep the branch name in sync with the
+    // Create Pull Request step in deps-autoupdate.yml.
+    if (process.env.GITHUB_REPOSITORY) {
+        const raw = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}`;
+        const image = 'e2e/screenshots/map.png';
+        lines.push(
+            '',
+            '## Visual comparison (should look identical)',
+            '',
+            '| Before (main) | After (deps updated) |',
+            '| --- | --- |',
+            `| ![before](${raw}/main/${image}) | ![after](${raw}/bot/deps-update/${image}) |`,
+            '',
+            `If rendering changed, \`${image}\` also appears under Files changed with GitHub's image diff viewers (missing there = pixel-identical).`
+        );
+    }
     if (failedGroups.length > 0) {
         lines.push(
             '',
@@ -307,9 +331,28 @@ function compareVersions(a, b) {
     return 0;
 }
 
-function bumpPatch(version) {
-    const [major, minor, patch] = parseStable(version);
-    return `${major}.${minor}.${patch + 1}`;
+// The PROJECT version allows an optional fourth segment ("1.9.4" or
+// "1.9.4.1"); registry versions stay strict three-segment (parseStable) on
+// purpose. Returns [major, minor, patch, fourth].
+function parseProjectVersion(version) {
+    const m = String(version).match(/^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/);
+    if (!m) throw new Error(`Invalid project version: ${version}`);
+    return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 0 : Number(m[4])];
+}
+
+function compareProjectVersions(a, b) {
+    const pa = parseProjectVersion(a);
+    const pb = parseProjectVersion(b);
+    for (let i = 0; i < 4; i++) {
+        if (pa[i] !== pb[i]) return pa[i] - pb[i];
+    }
+    return 0;
+}
+
+// "1.9.4" -> "1.9.4.1", "1.9.4.1" -> "1.9.4.2"
+function bumpFourth(version) {
+    const [major, minor, patch, fourth] = parseProjectVersion(version);
+    return `${major}.${minor}.${patch}.${fourth + 1}`;
 }
 
 function writeGithubOutput(keyValues) {
