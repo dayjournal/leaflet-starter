@@ -246,22 +246,33 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
         '- build (tsc + vite): OK',
         '- e2e smoke + visual diff vs pre-update main + runtime error check: OK',
     ];
-    // Both images live in this repo (no external hosting). The "after" link
-    // dies when the bot branch is deleted on merge — at which point main's
-    // image IS the after state. Keep the branch name in sync with the
-    // Create Pull Request step in deps-autoupdate.yml.
-    if (process.env.GITHUB_REPOSITORY) {
-        const raw = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}`;
-        const image = 'e2e/screenshots/map.png';
+    // before.png / after.png are both committed to the bot branch (see the
+    // "Capture ... comparison image" steps and add-paths in
+    // deps-autoupdate.yml), so both raw URLs resolve while the PR is open with
+    // no dependency on main carrying a baseline. They render the real basemap
+    // from committed offline fixtures (e2e/fixtures/tiles), so the render is
+    // deterministic: any visible difference is a genuine rendering change from
+    // this update (the deterministic pixel-diff gate above stays the
+    // authoritative check). The links die when the bot branch is deleted on
+    // merge; keep the branch name in sync with the Create Pull Request step in
+    // deps-autoupdate.yml.
+    //
+    // Guard on before.png only: it is produced before this script runs, whereas
+    // after.png is produced by a later step (guaranteed when there are updates,
+    // and its failure aborts the job before the PR is created).
+    const beforeImg = 'e2e/screenshots/before.png';
+    const afterImg = 'e2e/screenshots/after.png';
+    if (process.env.GITHUB_REPOSITORY && fs.existsSync(beforeImg)) {
+        const raw = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}/bot/deps-update`;
         lines.push(
             '',
             '## Visual comparison (should look identical)',
             '',
-            '| Before (main) | After (deps updated) |',
+            '| Before (pre-update) | After (updated) |',
             '| --- | --- |',
-            `| ![before](${raw}/main/${image}) | ![after](${raw}/bot/deps-update/${image}) |`,
+            `| ![before](${raw}/${beforeImg}) | ![after](${raw}/${afterImg}) |`,
             '',
-            `If rendering changed, \`${image}\` also appears under Files changed with GitHub's image diff viewers (missing there = pixel-identical).`
+            `If they differ, \`${afterImg}\` also shows a diff under Files changed with GitHub's image diff viewers (2-up / swipe / onion skin).`
         );
     }
     if (failedGroups.length > 0) {

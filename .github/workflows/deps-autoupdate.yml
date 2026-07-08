@@ -70,6 +70,15 @@ jobs:
         id: baseline
         run: pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
 
+      # "Before" comparison image: the pre-update render. Captured now because
+      # the post-update --update-snapshots below overwrites the same snapshot
+      # file. Committed to the PR branch and embedded in the PR body via a
+      # bot-branch raw URL (see writePrBody in deps-check-and-update.mjs).
+      - name: Capture "before" comparison image
+        run: |
+          mkdir -p e2e/screenshots
+          cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/before.png
+
       # Updates each dependency group, gates it with build + e2e (rolling back
       # groups that fail), bumps the project version, rewrites README versions,
       # and writes artifacts/pr-body.md. Emits step outputs: changed / delta /
@@ -80,17 +89,18 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node .github/scripts/deps-check-and-update.mjs
 
-      # Human-facing canonical screenshot committed with the PR. Byte-identical
-      # render -> no diff entry (pixel-identical, nothing to review); when the
-      # render did change, GitHub's image diff viewers (2-up / swipe / onion
-      # skin) apply. The PR body also embeds before/after raw URLs of this
-      # file (see writePrBody in deps-check-and-update.mjs).
-      - name: Refresh canonical screenshot
+      # "After" comparison image: the post-update render. Both images are
+      # committed to the PR branch and embedded in the PR body via bot-branch
+      # raw URLs. The committed fixture tiles (e2e/fixtures/tiles) make the
+      # render deterministic, so before.png and after.png differ only when the
+      # update actually changed the rendering — in which case GitHub's image
+      # diff viewers (2-up / swipe / onion skin) also apply under Files changed.
+      - name: Capture "after" comparison image
         if: steps.update.outputs.changed == 'true'
         run: |
           pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
           mkdir -p e2e/screenshots
-          cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/map.png
+          cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/after.png
 
       - name: Create Pull Request
         id: cpr
@@ -114,7 +124,8 @@ jobs:
             package.json
             pnpm-lock.yaml
             README.md
-            e2e/screenshots/map.png
+            e2e/screenshots/before.png
+            e2e/screenshots/after.png
 
       - name: Upload artifacts
         if: ${{ always() && (failure() || steps.update.outputs.changed == 'true' || steps.update.outputs.failed_groups != '') }}
