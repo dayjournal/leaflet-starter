@@ -9,6 +9,13 @@ name: Release
 permissions:
   contents: write
 
+# One release at a time: two overlapping runs could both see the tag missing
+# and race to push it. cancel-in-progress: false so a queued run still gets
+# to tag its own commit rather than being dropped.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     # This job holds a contents:write token, so it must only ever act on this
@@ -47,21 +54,31 @@ jobs:
         id: v
         run: node .github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Check tag existence
+      # Tag and Release are checked separately so the two steps can recover
+      # independently: if the tag pushed but the Release action then failed,
+      # the next main run re-creates only the missing Release instead of
+      # skipping both because the tag now exists.
+      - name: Check tag and release existence
         id: tag
         env:
           VERSION: ${{ steps.v.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # refs/tags/ so a branch or file of the same name cannot answer for
           # the tag.
           if git rev-parse --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create tag
-        if: steps.tag.outputs.exists != 'true'
+        if: steps.tag.outputs.tag_exists != 'true'
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
@@ -69,10 +86,10 @@ jobs:
           git push origin "v$VERSION"
 
       - name: Create GitHub Release
-        if: steps.tag.outputs.exists != 'true'
-        # Third-party action pinned to a commit SHA (v2); it runs with a
+        if: steps.tag.outputs.release_exists != 'true'
+        # Third-party action pinned to a commit SHA; it runs with a
         # contents:write token.
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         # with: inputs reach the action as data, never a shell, so expressions
         # are safe here.
         with:

@@ -38,13 +38,18 @@ pnpm run dev
 
 <br>
 
-test (build first — Playwright runs against `vite preview` of `dist/`)
+test (builds first — Playwright runs against `vite preview` of `dist/`)
 ```bash
-pnpm run build
 pnpm test
 ```
 
-The visual test compares against a local baseline that is intentionally not committed; create it once with `pnpm exec playwright test --update-snapshots`. First time only: `pnpm exec playwright install chromium`.
+The visual test is a separate command because it compares against a local baseline that is intentionally not committed — create it once, then compare:
+```bash
+pnpm run test:visual:update
+pnpm run test:visual
+```
+
+First time only: `pnpm exec playwright install chromium`.
 
 ---
 
@@ -124,14 +129,20 @@ pnpm run dev
 
 <br>
 
-テスト（先にビルドが必要 — Playwright は `dist/` を配信する `vite preview` に対して実行されます）
+テスト（ビルドも実行されます — Playwright は `dist/` を配信する `vite preview` に対して実行されます）
 
 ```bash
-pnpm run build
 pnpm test
 ```
 
-ビジュアルテストは、意図的にコミットしていないローカルのベースライン画像と比較します。初回は `pnpm exec playwright test --update-snapshots` で作成してください。初回のみ `pnpm exec playwright install chromium` も必要です。
+ビジュアルテストは、意図的にコミットしていないローカルのベースライン画像と比較するため別コマンドです。初回に作成してから比較してください。
+
+```bash
+pnpm run test:visual:update
+pnpm run test:visual
+```
+
+初回のみ `pnpm exec playwright install chromium` も必要です。
 
 <br>
 <br>
