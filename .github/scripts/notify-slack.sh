@@ -20,15 +20,23 @@ elif [ "${O_BROWSERS:-}"     = "failure" ]; then stage="playwright-install"
 elif [ "${O_BASELINE:-}"     = "failure" ]; then stage="baseline"
 elif [ "${O_UPDATE:-}"       = "failure" ]; then stage="update"
 elif [ "${O_CPR:-}"          = "failure" ]; then stage="create-pr"
+elif [ "${O_AUTOMERGE:-}"    = "failure" ]; then stage="auto-merge"
 fi
 
-# Pick the message. The dry-run branch must come before the FAILED_GROUPS
-# ones: a dry run never opens a PR, even when some groups pass.
-if [ -n "$stage" ]; then
+# Pick the message. The auto-merge failure branch must come before the
+# generic stage one: by then a PR exists, so "nothing was pushed" would be
+# wrong. The dry-run branch must come before the FAILED_GROUPS ones: a dry
+# run never opens a PR, even when some groups pass.
+if [ "$stage" = "auto-merge" ]; then
+    text=$(lines \
+        ":x: leaflet-starter deps update: checks passed and the PR was created, but auto-merge FAILED." \
+        "Updates: ${DELTA:-}" \
+        "Nothing was merged. Review and merge manually: ${PR_URL:-${RUN_URL:-}}")
+elif [ -n "$stage" ]; then
     text=$(lines \
         ":x: leaflet-starter deps auto-update failed at stage: ${stage}" \
         "Updates detected: ${DELTA:-none}" \
-        "Nothing was pushed. Artifacts are on the run: ${RUN_URL:-}")
+        "Nothing was merged. Artifacts are on the run: ${RUN_URL:-}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${DRY_RUN:-}" = "true" ]; then
     text=$(lines \
         ":large_blue_circle: [dry run] leaflet-starter update checks passed: ${DELTA:-}" \
@@ -37,12 +45,21 @@ elif [ "${CHANGED:-}" = "true" ] && [ "${DRY_RUN:-}" = "true" ]; then
 elif [ -n "${FAILED_GROUPS:-}" ] && [ "${CHANGED:-}" = "true" ]; then
     text=$(lines \
         ":warning: leaflet-starter deps update: some groups failed checks and were excluded: ${FAILED_GROUPS}" \
-        "PR created for the passing updates (${DELTA:-}): ${PR_URL:-${RUN_URL:-}}")
+        "NOT auto-merged. PR with the passing updates (${DELTA:-}) needs review: ${PR_URL:-${RUN_URL:-}}")
 elif [ -n "${FAILED_GROUPS:-}" ]; then
     text=$(lines \
         ":x: leaflet-starter deps update: all update groups failed checks: ${FAILED_GROUPS}" \
-        "No PR created. Artifacts are on the run: ${RUN_URL:-}")
+        "No PR created, nothing merged. Artifacts are on the run: ${RUN_URL:-}")
+elif [ "${CHANGED:-}" = "true" ] && [ "${MERGED:-}" = "true" ]; then
+    text=$(lines \
+        ":white_check_mark: leaflet-starter deps update v${NEXT_VERSION:-} (${DELTA:-}) passed all checks and was auto-merged." \
+        "CI, the release and the Pages deploy follow automatically. ${PR_URL:-${RUN_URL:-}}")
+elif [ "${CHANGED:-}" = "true" ] && [ "${MERGE_SKIPPED:-}" = "no-token" ]; then
+    text=$(lines \
+        ":warning: leaflet-starter update PR passed all checks but was NOT auto-merged: secrets.PR_TOKEN is not set." \
+        "Merge manually: v${NEXT_VERSION:-} (${DELTA:-}) ${PR_URL:-${RUN_URL:-}}")
 elif [ "${CHANGED:-}" = "true" ]; then
+    # Safety net: PR exists but the auto-merge step reported neither outcome.
     text=$(lines \
         ":white_check_mark: leaflet-starter update PR is ready for review: v${NEXT_VERSION:-} (${DELTA:-})" \
         "Merging it will release automatically. ${PR_URL:-${RUN_URL:-}}")
