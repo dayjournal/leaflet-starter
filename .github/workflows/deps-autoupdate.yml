@@ -78,6 +78,7 @@ jobs:
       # file. Committed to the PR branch and embedded in the PR body via a
       # bot-branch raw URL (see writePrBody in deps-check-and-update.mjs).
       - name: Capture "before" comparison image
+        id: before_img
         run: |
           mkdir -p e2e/screenshots
           cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/before.png
@@ -103,8 +104,13 @@ jobs:
       # update actually changed the rendering — in which case GitHub's image
       # diff viewers (2-up / swipe / onion skin) also apply under Files changed.
       - name: Capture "after" comparison image
+        id: after_img
         if: steps.update.outputs.changed == 'true'
+        # Rebuild first: rolling back a failed group restores package.json and
+        # node_modules but not dist/, so without this the preview server could
+        # render the rejected group's build instead of what the PR ships.
         run: |
+          pnpm run build
           pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
           mkdir -p e2e/screenshots
           cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/after.png
@@ -199,9 +205,14 @@ jobs:
           O_BUILD_BASE: ${{ steps.build_base.outcome }}
           O_BROWSERS: ${{ steps.browsers.outcome }}
           O_BASELINE: ${{ steps.baseline.outcome }}
+          O_BEFORE_IMG: ${{ steps.before_img.outcome }}
           O_UPDATE: ${{ steps.update.outcome }}
+          O_AFTER_IMG: ${{ steps.after_img.outcome }}
           O_CPR: ${{ steps.cpr.outcome }}
           O_AUTOMERGE: ${{ steps.automerge.outcome }}
+          # Catch-all for steps the O_* map doesn't know: a red job must never
+          # be reported as success or silence (see notify-slack.sh).
+          JOB_STATUS: ${{ job.status }}
           MERGED: ${{ steps.automerge.outputs.merged }}
           MERGE_SKIPPED: ${{ steps.automerge.outputs.skipped }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

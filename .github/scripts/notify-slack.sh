@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Slack notification for the Dependency Auto Update workflow. Reads the step
-# outcomes (O_*) and the update step's outputs from the environment — see the
-# Notify Slack step in deps-autoupdate.yml for the full list.
+# outcomes (O_*), the overall job status (JOB_STATUS) and the update step's
+# outputs from the environment — see the Notify Slack step in
+# deps-autoupdate.yml for the full list.
 #
 # Sends at most one message per run. Quiet days (nothing changed, nothing
 # failed) send nothing — silence = checked and all good — except a heartbeat
@@ -18,7 +19,9 @@ if   [ "${O_INSTALL_BASE:-}" = "failure" ]; then stage="install-base"
 elif [ "${O_BUILD_BASE:-}"   = "failure" ]; then stage="build-base"
 elif [ "${O_BROWSERS:-}"     = "failure" ]; then stage="playwright-install"
 elif [ "${O_BASELINE:-}"     = "failure" ]; then stage="baseline"
+elif [ "${O_BEFORE_IMG:-}"   = "failure" ]; then stage="before-image"
 elif [ "${O_UPDATE:-}"       = "failure" ]; then stage="update"
+elif [ "${O_AFTER_IMG:-}"    = "failure" ]; then stage="after-image"
 elif [ "${O_CPR:-}"          = "failure" ]; then stage="create-pr"
 elif [ "${O_AUTOMERGE:-}"    = "failure" ]; then stage="auto-merge"
 fi
@@ -37,6 +40,14 @@ elif [ -n "$stage" ]; then
         ":x: leaflet-starter deps auto-update failed at stage: ${stage}" \
         "Updates detected: ${DELTA:-none}" \
         "Nothing was merged. Artifacts are on the run: ${RUN_URL:-}")
+elif [ "${JOB_STATUS:-success}" != "success" ]; then
+    # A step failed that the stage map above doesn't know (newly added and
+    # not mapped in, or the job was cancelled) — a red run must never fall
+    # through to a success message or to silence.
+    text=$(lines \
+        ":x: leaflet-starter deps auto-update failed (job status: ${JOB_STATUS:-})" \
+        "Updates detected: ${DELTA:-none}" \
+        "Nothing was merged. Details are on the run: ${RUN_URL:-}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${DRY_RUN:-}" = "true" ]; then
     text=$(lines \
         ":large_blue_circle: [dry run] leaflet-starter update checks passed: ${DELTA:-}" \
