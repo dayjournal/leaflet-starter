@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "pnpm run build && playwright test",
+    "test": "pnpm run build && playwright test e2e/smoke.spec.ts",
+    "test:visual": "pnpm run build && playwright test e2e/visual.spec.ts",
+    "test:visual:update": "pnpm run build && playwright test e2e/visual.spec.ts --update-snapshots",
     "format": "prettier --write ."
   },
   "keywords": [

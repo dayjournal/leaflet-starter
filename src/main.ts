@@ -3,9 +3,9 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
 // Leaflet builds its default marker/control icon URLs at runtime, so Vite
-// cannot bundle them; they are served from public/img/icon/ (a copy of
-// leaflet/dist/images — keep it in sync when bumping Leaflet). The path is
-// deliberately relative so it also resolves under the GitHub Pages base
+// cannot bundle them; they are served from public/img/icon/ (leaflet's
+// dist/images, re-encoded as RGBA — same artwork, different bytes). The path
+// is deliberately relative so it also resolves under the GitHub Pages base
 // (/leaflet-starter/).
 L.Icon.Default.imagePath = 'img/icon/';
 

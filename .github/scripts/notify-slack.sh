@@ -18,8 +18,10 @@ lines() { printf '%s\n' "$@"; }
 # through FAILED_STAGE; the two steps that act in this job are checked here.
 stage="${FAILED_STAGE:-}"
 if [ -z "$stage" ]; then
-    if   [ "${O_CPR:-}"       = "failure" ]; then stage="create-pr"
-    elif [ "${O_AUTOMERGE:-}" = "failure" ]; then stage="auto-merge"
+    if   [ "${O_BASE_CHECK:-}" = "failure" ]; then stage="base-moved"
+    elif [ "${O_VERIFY:-}"     = "failure" ]; then stage="verify-result-files"
+    elif [ "${O_CPR:-}"        = "failure" ]; then stage="create-pr"
+    elif [ "${O_AUTOMERGE:-}"  = "failure" ]; then stage="auto-merge"
     fi
 fi
 
