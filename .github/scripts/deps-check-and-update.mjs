@@ -27,7 +27,9 @@ const README_PATH = 'README.md';
 const ART_DIR = 'artifacts';
 
 // Only adopt versions published at least this many days ago, so a compromised
-// release gets a chance to be yanked before we ever open a PR for it.
+// release gets a chance to be yanked before we ever open a PR for it. pnpm
+// enforces the same age gate on every install (including transitive
+// dependencies) via minimumReleaseAge in pnpm-workspace.yaml — keep in sync.
 const MIN_AGE_DAYS = 7;
 
 // Packages in one group are updated and tested together. @types/leaflet rides
@@ -118,7 +120,7 @@ function selectVersion(name, current) {
     if (compareVersions(latest, current) === 0) return null;
 
     const publishDates = JSON.parse(capture(`npm view "${name}" time --json`));
-    const cutoff = Date.parse(ageCutoff());
+    const cutoff = Date.now() - MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
     let picked = null;
     for (const [version, published] of Object.entries(publishDates)) {
         if (!parseStable(version)) continue; // skips prereleases and the created/modified keys
@@ -133,13 +135,6 @@ function selectVersion(name, current) {
         );
     }
     return picked;
-}
-
-// The cutoff used when selecting versions. pnpm enforces the same age gate on
-// every install (including transitive dependencies) via minimumReleaseAge in
-// pnpm-workspace.yaml — keep the two in sync.
-function ageCutoff() {
-    return new Date(Date.now() - MIN_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
 // Returns the name of the first failing stage, or null if everything passed.
