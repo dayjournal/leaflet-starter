@@ -285,9 +285,18 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
     if (process.env.RUN_URL) {
         lines.push('', `Artifacts (playwright report / visual diffs): ${process.env.RUN_URL}`);
     }
+    // Keep in sync with the Auto-merge step in deps-autoupdate.yml: a PR
+    // with excluded groups is never auto-merged, and without PR_TOKEN
+    // (AUTO_MERGE env, computed by the workflow) nothing merges it either.
+    const chain =
+        'CI then runs on main, the Release workflow tags and publishes the new version, and the Pages workflow redeploys the demo.';
     lines.push(
         '',
-        'Merging this PR triggers CI; the Release workflow then tags and publishes the new version, and the Pages workflow redeploys the demo.'
+        failedGroups.length > 0
+            ? `Because some groups failed checks, this PR is NOT auto-merged — review the exclusions, then merge manually. ${chain}`
+            : process.env.AUTO_MERGE === 'true'
+              ? `All checks passed, so the update workflow merges this PR automatically. ${chain}`
+              : `All checks passed, but auto-merge is disabled (secrets.PR_TOKEN is not set) — merge manually. ${chain}`
     );
     fs.writeFileSync(path.join(ART_DIR, 'pr-body.md'), lines.join('\n') + '\n');
 }

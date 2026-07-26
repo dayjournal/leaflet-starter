@@ -2,10 +2,13 @@ name: Dependency Auto Update
 
 # Daily flow: detect newer leaflet/typescript/vite versions, gate each group
 # with build + e2e (visual diff vs pre-update main + runtime error check),
-# open a PR with the passing updates, and notify Slack. A human merges the PR;
-# CI then runs on main, the Release workflow tags + publishes, and the Pages
-# workflow redeploys the demo — all automatically.
-# On failure nothing is pushed anywhere — Slack gets the details.
+# open a PR with the passing updates, and — when every group passed — merge
+# it automatically; CI then runs on main, the Release workflow tags +
+# publishes, and the Pages workflow redeploys the demo — all automatically.
+# Slack is notified either way: merged, or why not.
+# On any failure nothing is merged: a fully-failed run pushes nothing at all,
+# and a partially-failed run leaves its PR (passing groups only) open for
+# human review — Slack gets the details in both cases.
 # Quiet days send nothing, except a heartbeat every 10th day proving the
 # schedule is still alive.
 
@@ -87,6 +90,10 @@ jobs:
         id: update
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Whether the Auto-merge step below can actually merge — lets the
+          # PR body tell the truth instead of promising a merge that the
+          # missing PR_TOKEN would skip.
+          AUTO_MERGE: ${{ secrets.PR_TOKEN != '' }}
         run: node .github/scripts/deps-check-and-update.mjs
 
       # "After" comparison image: the post-update render. Both images are
@@ -111,8 +118,9 @@ jobs:
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c
         with:
           # github.token works because "Allow GitHub Actions to create and
-          # approve pull requests" is enabled. Set secrets.PR_TOKEN (fine-
-          # grained PAT) only if CI should also run on the bot PR.
+          # approve pull requests" is enabled. secrets.PR_TOKEN (fine-grained
+          # PAT) additionally lets CI run on the bot PR and is required for
+          # the Auto-merge step below — see its comment.
           token: ${{ secrets.PR_TOKEN || github.token }}
           branch: bot/deps-update
           delete-branch: true
@@ -126,6 +134,37 @@ jobs:
             README.md
             e2e/screenshots/before.png
             e2e/screenshots/after.png
+
+      # Every update in the PR already passed build + e2e above, so a run
+      # where no group failed is safe to merge without human review. Merges
+      # with secrets.PR_TOKEN only, never github.token: GitHub suppresses
+      # events from pushes made with github.token, so the resulting merge
+      # commit would trigger neither CI (→ no Release) nor Pages — the chain
+      # this repo relies on. Without PR_TOKEN the PR is left open for a human
+      # and Slack says so. Skipped when any group was excluded: that PR needs
+      # a human to review the exclusions before merging.
+      - name: Auto-merge PR
+        id: automerge
+        if: >-
+          steps.cpr.outputs.pull-request-url != '' &&
+          steps.update.outputs.failed_groups == ''
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "skipped=no-token" >> "$GITHUB_OUTPUT"
+            echo "::warning::secrets.PR_TOKEN is not set; auto-merge skipped. Merge manually: $PR_URL"
+            exit 0
+          fi
+          gh pr merge "$PR_URL" --merge
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+          # Best-effort cleanup, separate from the merge: a failed branch
+          # delete must not report the (already successful) merge as failed.
+          # Deleting kills the PR body's image links, same as when a human
+          # deleted the branch on merge.
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/bot/deps-update" ||
+            echo "::warning::Merged, but could not delete bot/deps-update"
 
       - name: Upload artifacts
         if: ${{ always() && (failure() || steps.update.outputs.changed == 'true' || steps.update.outputs.failed_groups != '') }}
@@ -162,6 +201,9 @@ jobs:
           O_BASELINE: ${{ steps.baseline.outcome }}
           O_UPDATE: ${{ steps.update.outcome }}
           O_CPR: ${{ steps.cpr.outcome }}
+          O_AUTOMERGE: ${{ steps.automerge.outcome }}
+          MERGED: ${{ steps.automerge.outputs.merged }}
+          MERGE_SKIPPED: ${{ steps.automerge.outputs.skipped }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/notify-slack.sh
 

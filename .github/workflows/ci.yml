@@ -38,3 +38,20 @@ jobs:
 
       - name: Smoke test
         run: pnpm exec playwright test e2e/smoke.spec.ts
+
+      # The deps auto-update workflow merges its own PRs, so nobody is
+      # watching CI on main after those merges — a failure here silently
+      # blocks the Release and Pages workflows. Report it to Slack.
+      - name: Notify Slack (CI failed on main)
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL secret is not set. Skipped notification."
+            exit 0
+          fi
+          jq -n --arg text ":x: leaflet-starter CI failed on main — the release is blocked until this is fixed. The Pages demo deploys on push independently of CI, so it may already be live. $RUN_URL" '{text: $text}' |
+            curl -sf -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL" ||
+            echo "::warning::Slack notification failed"
