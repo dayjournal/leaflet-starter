@@ -1,12 +1,15 @@
-# CODEOWNERS helps enforce human review when branch protection enables
-# "Require review from Code Owners".
+# Review policy for this repository:
+# - Dependency PRs from .github/workflows/deps-autoupdate.yml merge themselves
+#   once every update group passed build + e2e inside that workflow. Those get
+#   no human review, by design.
+# - Everything else, workflow changes included, is expected to go through
+#   human review by the owner below.
 #
-# NOTE: Enabling the repository setting "Allow GitHub Actions to create and approve pull requests"
-# allows the workflow bot to open PRs. To ensure a human must approve, enable
-# branch protection with "Require review from Code Owners" and keep this file
-# pointing to a human account.
+# This file only requests reviews. It becomes an actual gate when branch
+# protection enables "Require review from Code Owners" — which would also
+# block the bot's auto-merge above; the two policies cannot both be on.
 
 * @dayjournal
 
-# Extra safety: changes to workflows should always be reviewed by a human.
+# Kept separate: workflow changes are the most security-sensitive files here.
 .github/workflows/* @dayjournal

@@ -11,6 +11,13 @@ name: Dependency Auto Update
 # human review — Slack gets the details in both cases.
 # Quiet days send nothing, except a heartbeat every 10th day proving the
 # schedule is still alive.
+#
+# Two jobs on purpose: `update` installs and executes freshly-published
+# third-party code, so it gets a read-only token and no secrets — code that
+# runs there can steal nothing, even when a malicious version fails its gate
+# after already executing at build time. Only `publish`, a fresh runner that
+# executes nothing the update produced, sees PR_TOKEN, the Slack webhook and
+# a write token. The jobs exchange a fixed list of result files, never code.
 
 "on":
   schedule:
@@ -22,11 +29,6 @@ name: Dependency Auto Update
         type: boolean
         default: false
 
-permissions:
-  contents: write
-  pull-requests: write
-  actions: write # keepalive re-enables this schedule via API
-
 concurrency:
   group: deps-autoupdate
   cancel-in-progress: false
@@ -35,24 +37,32 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.update.outputs.changed }}
+      delta: ${{ steps.update.outputs.delta }}
+      next_version: ${{ steps.update.outputs.next_version }}
+      failed_groups: ${{ steps.update.outputs.failed_groups }}
+      failed_stage: ${{ steps.stage.outputs.failed_stage }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Resolve main at fetch time, not event time: a queued run must not
           # re-apply updates that a previous run already turned into a PR.
           ref: main
           fetch-depth: 0
-          # This job builds and tests freshly-updated third-party code; do not
-          # leave the contents:write token in .git/config where that code
-          # could read it. Create Pull Request pushes with its own token input.
+          # This job builds and tests freshly-updated third-party code; do
+          # not leave even the read-only token in .git/config where that code
+          # could find it.
           persist-credentials: false
 
       # Installs the pnpm version pinned in package.json's packageManager
       # field. Third-party action pinned to a commit SHA (v4).
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -91,9 +101,10 @@ jobs:
         id: update
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # Whether the Auto-merge step below can actually merge — lets the
-          # PR body tell the truth instead of promising a merge that the
-          # missing PR_TOKEN would skip.
+          # Whether the publish job can actually merge — lets the PR body
+          # tell the truth instead of promising a merge that the missing
+          # PR_TOKEN would skip. A derived boolean only: the token itself
+          # never enters this job.
           AUTO_MERGE: ${{ secrets.PR_TOKEN != '' }}
         run: node .github/scripts/deps-check-and-update.mjs
 
@@ -115,9 +126,110 @@ jobs:
           mkdir -p e2e/screenshots
           cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/after.png
 
+      # The fixed set of result files the publish job may commit. Data only —
+      # the publish job never executes anything from this artifact.
+      - name: Hand the result files to the publish job
+        if: steps.update.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deps-update-result
+          path: |
+            package.json
+            pnpm-lock.yaml
+            README.md
+            e2e/screenshots/before.png
+            e2e/screenshots/after.png
+            artifacts/pr-body.md
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload artifacts
+        if: ${{ always() && (failure() || steps.update.outputs.changed == 'true' || steps.update.outputs.failed_groups != '') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deps-update-artifacts
+          path: |
+            artifacts/
+            test-results/
+            playwright-report/
+            .playwright-snapshots/
+          if-no-files-found: ignore
+          retention-days: 14
+          # Without this, dot-directories like .playwright-snapshots are
+          # silently dropped from the artifact (upload-artifact v4 default).
+          include-hidden-files: true
+
+      # Fold this job's step outcomes into one output, so the publish job's
+      # Slack message can name the failing stage.
+      - name: Report the failing stage
+        id: stage
+        if: always()
+        env:
+          O_INSTALL_BASE: ${{ steps.install_base.outcome }}
+          O_BUILD_BASE: ${{ steps.build_base.outcome }}
+          O_BROWSERS: ${{ steps.browsers.outcome }}
+          O_BASELINE: ${{ steps.baseline.outcome }}
+          O_BEFORE_IMG: ${{ steps.before_img.outcome }}
+          O_UPDATE: ${{ steps.update.outcome }}
+          O_AFTER_IMG: ${{ steps.after_img.outcome }}
+        run: |
+          stage=""
+          if   [ "$O_INSTALL_BASE" = "failure" ]; then stage="install-base"
+          elif [ "$O_BUILD_BASE"   = "failure" ]; then stage="build-base"
+          elif [ "$O_BROWSERS"     = "failure" ]; then stage="playwright-install"
+          elif [ "$O_BASELINE"     = "failure" ]; then stage="baseline"
+          elif [ "$O_BEFORE_IMG"   = "failure" ]; then stage="before-image"
+          elif [ "$O_UPDATE"       = "failure" ]; then stage="update"
+          elif [ "$O_AFTER_IMG"    = "failure" ]; then stage="after-image"
+          fi
+          echo "failed_stage=$stage" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: update
+    # always(): the Slack notification below must also fire when the update
+    # job failed.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that sees PR_TOKEN, the Slack webhook and a write token.
+    # It executes nothing the update job produced — result files are data.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write # keepalive re-enables this schedule via API
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          # Create Pull Request pushes with its own token input.
+          persist-credentials: false
+
+      - name: Fetch the result files
+        if: needs.update.outputs.changed == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: deps-update-result
+          path: incoming
+
+      # A fixed copy list, not a patch: only these six known paths can reach
+      # the PR, whatever the artifact contains.
+      - name: Apply the result files
+        if: needs.update.outputs.changed == 'true'
+        run: |
+          cp incoming/package.json package.json
+          cp incoming/pnpm-lock.yaml pnpm-lock.yaml
+          cp incoming/README.md README.md
+          mkdir -p e2e/screenshots artifacts
+          cp incoming/e2e/screenshots/before.png e2e/screenshots/
+          cp incoming/e2e/screenshots/after.png e2e/screenshots/
+          cp incoming/artifacts/pr-body.md artifacts/
+          rm -rf incoming
+
       - name: Create Pull Request
         id: cpr
-        if: steps.update.outputs.changed == 'true' && inputs.dry_run != true
+        if: needs.update.outputs.changed == 'true' && inputs.dry_run != true
         # Third-party action pinned to a commit SHA (v6) — this workflow's
         # token can write contents, so a hijacked tag must not be able to
         # swap the code underneath us.
@@ -130,8 +242,8 @@ jobs:
           token: ${{ secrets.PR_TOKEN || github.token }}
           branch: bot/deps-update
           delete-branch: true
-          title: "chore: bump deps to v${{ steps.update.outputs.next_version }} (${{ steps.update.outputs.delta }})"
-          commit-message: "chore: bump deps to v${{ steps.update.outputs.next_version }} (${{ steps.update.outputs.delta }})"
+          title: "chore: bump deps to v${{ needs.update.outputs.next_version }} (${{ needs.update.outputs.delta }})"
+          commit-message: "chore: bump deps to v${{ needs.update.outputs.next_version }} (${{ needs.update.outputs.delta }})"
           body-path: artifacts/pr-body.md
           labels: dependencies
           add-paths: |
@@ -141,19 +253,20 @@ jobs:
             e2e/screenshots/before.png
             e2e/screenshots/after.png
 
-      # Every update in the PR already passed build + e2e above, so a run
-      # where no group failed is safe to merge without human review. Merges
-      # with secrets.PR_TOKEN only, never github.token: GitHub suppresses
-      # events from pushes made with github.token, so the resulting merge
-      # commit would trigger neither CI (→ no Release) nor Pages — the chain
-      # this repo relies on. Without PR_TOKEN the PR is left open for a human
-      # and Slack says so. Skipped when any group was excluded: that PR needs
-      # a human to review the exclusions before merging.
+      # Every update in the PR already passed build + e2e in the update job,
+      # so a run where no group failed is safe to merge without human review.
+      # Merges with secrets.PR_TOKEN only, never github.token: GitHub
+      # suppresses events from pushes made with github.token, so the
+      # resulting merge commit would trigger neither CI (→ no Release) nor
+      # Pages — the chain this repo relies on. Without PR_TOKEN the PR is
+      # left open for a human and Slack says so. Skipped when any group was
+      # excluded: that PR needs a human to review the exclusions before
+      # merging.
       - name: Auto-merge PR
         id: automerge
         if: >-
           steps.cpr.outputs.pull-request-url != '' &&
-          steps.update.outputs.failed_groups == ''
+          needs.update.outputs.failed_groups == ''
         env:
           GH_TOKEN: ${{ secrets.PR_TOKEN }}
           PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
@@ -172,56 +285,37 @@ jobs:
           gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/bot/deps-update" ||
             echo "::warning::Merged, but could not delete bot/deps-update"
 
-      - name: Upload artifacts
-        if: ${{ always() && (failure() || steps.update.outputs.changed == 'true' || steps.update.outputs.failed_groups != '') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: deps-update-artifacts
-          path: |
-            artifacts/
-            test-results/
-            playwright-report/
-            .playwright-snapshots/
-          if-no-files-found: ignore
-          retention-days: 14
-          # Without this, dot-directories like .playwright-snapshots are
-          # silently dropped from the artifact (upload-artifact v4 default).
-          include-hidden-files: true
-
       # Message logic (including the 10-day heartbeat) lives in
-      # .github/scripts/notify-slack.sh; this step only maps step results
-      # into its environment.
+      # .github/scripts/notify-slack.sh; this step only maps the update job's
+      # results and this job's step results into its environment.
       - name: Notify Slack
         if: always()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          CHANGED: ${{ steps.update.outputs.changed }}
-          DELTA: ${{ steps.update.outputs.delta }}
-          NEXT_VERSION: ${{ steps.update.outputs.next_version }}
-          FAILED_GROUPS: ${{ steps.update.outputs.failed_groups }}
+          CHANGED: ${{ needs.update.outputs.changed }}
+          DELTA: ${{ needs.update.outputs.delta }}
+          NEXT_VERSION: ${{ needs.update.outputs.next_version }}
+          FAILED_GROUPS: ${{ needs.update.outputs.failed_groups }}
+          FAILED_STAGE: ${{ needs.update.outputs.failed_stage }}
+          UPDATE_RESULT: ${{ needs.update.result }}
           PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
           DRY_RUN: ${{ inputs.dry_run }}
-          O_INSTALL_BASE: ${{ steps.install_base.outcome }}
-          O_BUILD_BASE: ${{ steps.build_base.outcome }}
-          O_BROWSERS: ${{ steps.browsers.outcome }}
-          O_BASELINE: ${{ steps.baseline.outcome }}
-          O_BEFORE_IMG: ${{ steps.before_img.outcome }}
-          O_UPDATE: ${{ steps.update.outcome }}
-          O_AFTER_IMG: ${{ steps.after_img.outcome }}
           O_CPR: ${{ steps.cpr.outcome }}
           O_AUTOMERGE: ${{ steps.automerge.outcome }}
-          # Catch-all for steps the O_* map doesn't know: a red job must never
-          # be reported as success or silence (see notify-slack.sh).
-          JOB_STATUS: ${{ job.status }}
           MERGED: ${{ steps.automerge.outputs.merged }}
           MERGE_SKIPPED: ${{ steps.automerge.outputs.skipped }}
+          # Catch-all for steps the stage map doesn't know: a red job must
+          # never be reported as success or silence (see notify-slack.sh).
+          JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/notify-slack.sh
 
       - name: Fail run if some groups were excluded
-        if: steps.update.outputs.failed_groups != ''
+        if: needs.update.outputs.failed_groups != ''
+        env:
+          FAILED_GROUPS: ${{ needs.update.outputs.failed_groups }}
         run: |
-          echo "::error::Dependency groups failed checks: ${{ steps.update.outputs.failed_groups }}"
+          echo "::error::Dependency groups failed checks: $FAILED_GROUPS"
           exit 1
 
       # GitHub disables cron workflows after 60 days without repo activity;

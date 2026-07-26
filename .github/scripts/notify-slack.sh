@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Slack notification for the Dependency Auto Update workflow. Reads the step
-# outcomes (O_*), the overall job status (JOB_STATUS) and the update step's
-# outputs from the environment — see the Notify Slack step in
-# deps-autoupdate.yml for the full list.
+# Slack notification for the Dependency Auto Update workflow. Runs in the
+# publish job: the update job folds its result into FAILED_STAGE /
+# UPDATE_RESULT and its outputs, while the PR and merge steps of this job are
+# read directly (O_*) — see the Notify Slack step in deps-autoupdate.yml for
+# the full list.
 #
 # Sends at most one message per run. Quiet days (nothing changed, nothing
 # failed) send nothing — silence = checked and all good — except a heartbeat
@@ -13,17 +14,13 @@ set -u
 # Join arguments with newlines.
 lines() { printf '%s\n' "$@"; }
 
-# Which step failed, if any?
-stage=""
-if   [ "${O_INSTALL_BASE:-}" = "failure" ]; then stage="install-base"
-elif [ "${O_BUILD_BASE:-}"   = "failure" ]; then stage="build-base"
-elif [ "${O_BROWSERS:-}"     = "failure" ]; then stage="playwright-install"
-elif [ "${O_BASELINE:-}"     = "failure" ]; then stage="baseline"
-elif [ "${O_BEFORE_IMG:-}"   = "failure" ]; then stage="before-image"
-elif [ "${O_UPDATE:-}"       = "failure" ]; then stage="update"
-elif [ "${O_AFTER_IMG:-}"    = "failure" ]; then stage="after-image"
-elif [ "${O_CPR:-}"          = "failure" ]; then stage="create-pr"
-elif [ "${O_AUTOMERGE:-}"    = "failure" ]; then stage="auto-merge"
+# Which stage failed, if any? The update job reports its own failing step
+# through FAILED_STAGE; the two steps that act in this job are checked here.
+stage="${FAILED_STAGE:-}"
+if [ -z "$stage" ]; then
+    if   [ "${O_CPR:-}"       = "failure" ]; then stage="create-pr"
+    elif [ "${O_AUTOMERGE:-}" = "failure" ]; then stage="auto-merge"
+    fi
 fi
 
 # Pick the message. The auto-merge failure branch must come before the
@@ -40,12 +37,12 @@ elif [ -n "$stage" ]; then
         ":x: leaflet-starter deps auto-update failed at stage: ${stage}" \
         "Updates detected: ${DELTA:-none}" \
         "Nothing was merged. Artifacts are on the run: ${RUN_URL:-}")
-elif [ "${JOB_STATUS:-success}" != "success" ]; then
-    # A step failed that the stage map above doesn't know (newly added and
-    # not mapped in, or the job was cancelled) — a red run must never fall
-    # through to a success message or to silence.
+elif [ "${UPDATE_RESULT:-success}" != "success" ] || [ "${JOB_STATUS:-success}" != "success" ]; then
+    # A failure the stage map above doesn't know (a newly added step that is
+    # not mapped in, or a cancelled job) — a red run must never fall through
+    # to a success message or to silence.
     text=$(lines \
-        ":x: leaflet-starter deps auto-update failed (job status: ${JOB_STATUS:-})" \
+        ":x: leaflet-starter deps auto-update failed (update: ${UPDATE_RESULT:-?}, publish: ${JOB_STATUS:-?})" \
         "Updates detected: ${DELTA:-none}" \
         "Nothing was merged. Details are on the run: ${RUN_URL:-}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${DRY_RUN:-}" = "true" ]; then
