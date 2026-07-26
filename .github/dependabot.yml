@@ -1,0 +1,16 @@
+version: 2
+
+updates:
+  # Keeps the SHA-pinned Actions moving: deps-autoupdate.yml only covers
+  # leaflet / typescript / vite, and a pinned SHA never updates itself.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # One PR a week for all Actions instead of one per action.
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies

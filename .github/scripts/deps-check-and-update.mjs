@@ -290,7 +290,7 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
         failedGroups.length > 0
             ? `Because some groups failed checks, this PR is NOT auto-merged — review the exclusions, then merge manually. ${chain}`
             : process.env.AUTO_MERGE === 'true'
-              ? `All checks passed, so the update workflow merges this PR automatically. ${chain}`
+              ? `All checks passed, so the update workflow arms auto-merge — GitHub merges this PR as soon as CI passes on it. ${chain}`
               : `All checks passed, but auto-merge is disabled (secrets.PR_TOKEN is not set) — merge manually. ${chain}`
     );
     fs.writeFileSync(path.join(ART_DIR, 'pr-body.md'), lines.join('\n') + '\n');

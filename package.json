@@ -1,12 +1,13 @@
 {
   "name": "leaflet-starter",
   "version": "1.9.4.6",
+  "private": true,
   "description": "Start Leaflet easily with TypeScript and Vite",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "playwright test",
+    "test": "pnpm run build && playwright test",
     "format": "prettier --write ."
   },
   "keywords": [

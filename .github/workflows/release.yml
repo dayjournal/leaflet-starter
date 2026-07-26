@@ -11,11 +11,20 @@ permissions:
 
 jobs:
   release:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # This job holds a contents:write token, so it must only ever act on this
+    # repository's own main pushes. A fork PR whose head branch is named
+    # "main" also matches the branches filter above; without the event and
+    # head_repository checks its code would run here with write access — the
+    # pwn-request pattern GitHub warns about in the Secure use reference.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -23,7 +32,7 @@ jobs:
           # with them, and this job runs no third-party project code.
           persist-credentials: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
 
@@ -32,32 +41,40 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Fails the run if package.json holds anything but a plain version
+      # number, so nothing unexpected reaches the shell steps below.
       - name: Read versions from package.json
         id: v
         run: node .github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
 
       - name: Check tag existence
         id: tag
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
-          TAG="v${{ steps.v.outputs.version }}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+          # refs/tags/ so a branch or file of the same name cannot answer for
+          # the tag.
+          if git rev-parse --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create tag
         if: steps.tag.outputs.exists != 'true'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
-          TAG="v${{ steps.v.outputs.version }}"
-          git tag "$TAG"
-          git push origin "$TAG"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Create GitHub Release
         if: steps.tag.outputs.exists != 'true'
         # Third-party action pinned to a commit SHA (v2); it runs with a
         # contents:write token.
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        # with: inputs reach the action as data, never a shell, so expressions
+        # are safe here.
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: v${{ steps.v.outputs.version }}
