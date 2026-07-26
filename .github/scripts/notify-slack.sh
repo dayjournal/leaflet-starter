@@ -58,6 +58,10 @@ elif [ -n "${FAILED_GROUPS:-}" ]; then
     text=$(lines \
         ":x: leaflet-starter deps update: all update groups failed checks: ${FAILED_GROUPS}" \
         "No PR created, nothing merged. Artifacts are on the run: ${RUN_URL:-}")
+elif [ "${CHANGED:-}" = "true" ] && [ "${ARMED:-}" = "true" ]; then
+    text=$(lines \
+        ":white_check_mark: leaflet-starter deps update v${NEXT_VERSION:-} (${DELTA:-}) passed all checks — auto-merge armed." \
+        "GitHub merges the PR as soon as CI passes on it; the release and the Pages deploy follow. ${PR_URL:-${RUN_URL:-}}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${MERGED:-}" = "true" ]; then
     text=$(lines \
         ":white_check_mark: leaflet-starter deps update v${NEXT_VERSION:-} (${DELTA:-}) passed all checks and was auto-merged." \

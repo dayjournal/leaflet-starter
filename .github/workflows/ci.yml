@@ -47,22 +47,33 @@ jobs:
       - name: Smoke test
         run: pnpm exec playwright test e2e/smoke.spec.ts
 
-      # The deps auto-update workflow merges its own PRs, so nobody is
-      # watching CI on main after those merges — a failure here silently
-      # blocks the Release workflow. Report it to Slack. always() + status
-      # check instead of failure(): the job's timeout-minutes CANCELS the job
-      # rather than failing it, and failure() steps don't run on cancellation.
-      - name: Notify Slack (CI failed on main)
-        if: always() && job.status != 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Nobody watches these two runs, so a failure must reach Slack: CI on
+      # main (blocks the Release workflow), and CI on the bot deps PR (the
+      # armed auto-merge then never fires and the PR quietly stays open).
+      # always() + status check instead of failure(): the job's
+      # timeout-minutes CANCELS the job rather than failing it, and
+      # failure() steps don't run on cancellation.
+      - name: Notify Slack (CI failed unattended)
+        if: >-
+          always() && job.status != 'success' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'pull_request' && github.head_ref == 'bot/deps-update'))
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           JOB_STATUS: ${{ job.status }}
+          ON_MAIN: ${{ github.event_name == 'push' }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
             echo "::warning::SLACK_WEBHOOK_URL secret is not set. Skipped notification."
             exit 0
           fi
-          jq -n --arg text ":x: leaflet-starter CI $JOB_STATUS on main — the release is blocked until this is fixed. Pages only deploys after CI passes, so the demo still shows the last good commit. $RUN_URL" '{text: $text}' |
+          if [ "$ON_MAIN" = "true" ]; then
+            text=":x: leaflet-starter CI $JOB_STATUS on main — the release is blocked until this is fixed. Pages only deploys after CI passes, so the demo still shows the last good commit. $RUN_URL"
+          else
+            text=":x: leaflet-starter CI $JOB_STATUS on the bot deps PR — auto-merge will not fire and the PR stays open: ${PR_URL:-$RUN_URL}"
+          fi
+          jq -n --arg text "$text" '{text: $text}' |
             curl -sf -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL" ||
             echo "::warning::Slack notification failed"

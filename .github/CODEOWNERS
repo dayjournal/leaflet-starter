@@ -1,7 +1,8 @@
 # Review policy for this repository:
-# - Dependency PRs from .github/workflows/deps-autoupdate.yml merge themselves
-#   once every update group passed build + e2e inside that workflow. Those get
-#   no human review, by design.
+# - Dependency PRs from .github/workflows/deps-autoupdate.yml arm auto-merge
+#   once every update group passed build + e2e inside that workflow; GitHub
+#   merges them when the required CI check passes on the PR. Those get no
+#   human review, by design.
 # - Everything else, workflow changes included, is expected to go through
 #   human review by the owner below.
 #
