@@ -248,9 +248,12 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
     // from committed offline fixtures (e2e/fixtures/tiles), so the render is
     // deterministic: any visible difference is a genuine rendering change from
     // this update (the deterministic pixel-diff gate above stays the
-    // authoritative check). The links die when the bot branch is deleted on
-    // merge; keep the branch name in sync with the Create Pull Request step in
-    // deps-autoupdate.yml.
+    // authoritative check). The branch URLs here are a placeholder: right
+    // after the PR is created, the publish job rewrites them to the commit
+    // SHA ("Point PR-body images at the commit SHA"), which stays reachable
+    // through the merge commit — so the images keep rendering after the
+    // branch is deleted on merge. Keep the branch name in sync with that
+    // step's sed pattern and with the Create Pull Request step's `branch:`.
     //
     // Guard on before.png only: it is produced before this script runs, whereas
     // after.png is produced by a later step (guaranteed when there are updates,
