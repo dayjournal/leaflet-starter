@@ -285,6 +285,22 @@ jobs:
             e2e/screenshots/before.png
             e2e/screenshots/after.png
 
+      # writePrBody embeds before/after via bot-branch raw URLs, which 404
+      # once the branch is deleted on merge. Now that the commit exists,
+      # repoint them at its immutable SHA — reachable from main through the
+      # merge commit — so the images keep rendering in the merged PR. If this
+      # step ever fails, the body just keeps the branch URLs (fine while the
+      # PR is open), so it is not mapped into the Slack stage ladder.
+      - name: Point PR-body images at the commit SHA
+        if: steps.cpr.outputs.pull-request-url != ''
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN || github.token }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          HEAD_SHA: ${{ steps.cpr.outputs.pull-request-head-sha }}
+        run: |
+          sed "s#/bot/deps-update/#/$HEAD_SHA/#g" artifacts/pr-body.md > pr-body-final.md
+          gh pr edit "$PR_URL" --body-file pr-body-final.md
+
       # Every update in the PR already passed build + e2e in the update job.
       # A fully-passing run arms GitHub's auto-merge: the PR then merges as
       # soon as the required CI check passes on it (branch protection),
