@@ -1,24 +1,8 @@
 name: Dependency Auto Update
 
-# Daily flow: detect newer leaflet/typescript/vite versions, gate each group
-# with build + e2e (visual diff vs pre-update main + runtime error check),
-# open a PR with the passing updates, and — when every group passed — arm
-# auto-merge (GitHub merges once CI passes on the PR); CI then runs on main,
-# the Release workflow tags + publishes, and the Pages workflow redeploys
-# the demo — all automatically.
-# Slack is notified either way: merged, or why not.
-# On any failure nothing is merged: a fully-failed run pushes nothing at all,
-# and a partially-failed run leaves its PR (passing groups only) open for
-# human review — Slack gets the details in both cases.
-# Quiet days send nothing, except a heartbeat every 10th day proving the
-# schedule is still alive.
-#
-# Two jobs on purpose: `update` installs and executes freshly-published
-# third-party code, so it gets a read-only token and no secrets — code that
-# runs there can steal nothing, even when a malicious version fails its gate
-# after already executing at build time. Only `publish`, a fresh runner that
-# executes nothing the update produced, sees PR_TOKEN, the Slack webhook and
-# a write token. The jobs exchange a fixed list of result files, never code.
+# Daily dependency updates. See README for behavior and GitHub App setup.
+# Keep secrets out of `update`, which executes new dependencies. Only
+# `publish` receives credentials and handles validated result files as data.
 
 "on":
   schedule:
@@ -51,23 +35,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Resolve main at fetch time, not event time: a queued run must not
-          # re-apply updates that a previous run already turned into a PR.
+          # Queued runs must start from the latest main.
           ref: main
           fetch-depth: 0
-          # This job builds and tests freshly-updated third-party code; do
-          # not leave even the read-only token in .git/config where that code
-          # could find it.
+          # Keep the checkout token out of reach of dependency scripts.
           persist-credentials: false
 
-      # The main commit this run tests against. The publish job checks main
-      # has not moved since, so a same-window push is never silently reverted.
+      # Publish rejects results if main has moved since this commit.
       - name: Record base commit
         id: base
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Installs the pnpm version pinned in package.json's packageManager
-      # field. Third-party action pinned to a commit SHA.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -91,51 +69,30 @@ jobs:
         id: baseline
         run: pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
 
-      # "Before" comparison image: the pre-update render. Captured now because
-      # the post-update --update-snapshots below overwrites the same snapshot
-      # file. Committed to the PR branch and embedded in the PR body via a
-      # bot-branch raw URL (see writePrBody in deps-check-and-update.mjs).
+      # Save the baseline before the updated render overwrites it.
       - name: Capture "before" comparison image
         id: before_img
         run: |
           mkdir -p e2e/screenshots
           cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/before.png
 
-      # Updates each dependency group, gates it with build + e2e (rolling back
-      # groups that fail), bumps the project version, rewrites README versions,
-      # and writes artifacts/pr-body.md. Emits step outputs: changed / delta /
-      # prev_version / next_version / updated_packages / failed_groups.
       - name: Update dependencies
         id: update
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # Whether the publish job can actually merge — lets the PR body
-          # tell the truth instead of promising a merge that the missing
-          # PR_TOKEN would skip. A derived boolean only: the token itself
-          # never enters this job.
-          AUTO_MERGE: ${{ secrets.PR_TOKEN != '' }}
         run: node .github/scripts/deps-check-and-update.mjs
 
-      # "After" comparison image: the post-update render. Both images are
-      # committed to the PR branch and embedded in the PR body via bot-branch
-      # raw URLs. The committed fixture tiles (e2e/fixtures/tiles) make the
-      # render deterministic, so before.png and after.png differ only when the
-      # update actually changed the rendering — in which case GitHub's image
-      # diff viewers (2-up / swipe / onion skin) also apply under Files changed.
       - name: Capture "after" comparison image
         id: after_img
         if: steps.update.outputs.changed == 'true'
-        # Rebuild first: rolling back a failed group restores package.json and
-        # node_modules but not dist/, so without this the preview server could
-        # render the rejected group's build instead of what the PR ships.
+        # Rollback restores dependencies but leaves dist/ from the failed build.
         run: |
           pnpm run build
           pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
           mkdir -p e2e/screenshots
           cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/after.png
 
-      # The fixed set of result files the publish job may commit. Data only —
-      # the publish job never executes anything from this artifact.
+      # Transfer only the files publish is allowed to commit.
       - name: Hand the result files to the publish job
         if: steps.update.outputs.changed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -163,12 +120,10 @@ jobs:
             .playwright-snapshots/
           if-no-files-found: ignore
           retention-days: 14
-          # Without this, dot-directories like .playwright-snapshots are
-          # silently dropped from the artifact (upload-artifact default).
+          # Include .playwright-snapshots in failure diagnostics.
           include-hidden-files: true
 
-      # Fold this job's step outcomes into one output, so the publish job's
-      # Slack message can name the failing stage.
+      # Pass the failing stage to publish for its Slack notification.
       - name: Report the failing stage
         id: stage
         if: always()
@@ -194,17 +149,17 @@ jobs:
 
   publish:
     needs: update
-    # always(): the Slack notification below must also fire when the update
-    # job failed.
+    # Report failures from the update job too.
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The only job that sees PR_TOKEN, the Slack webhook and a write token.
-    # It executes nothing the update job produced — result files are data.
     permissions:
       contents: write
       pull-requests: write
       actions: write # keepalive re-enables this schedule via API
+    env:
+      # Step conditions cannot access secrets directly.
+      APP_CONFIGURED: ${{ vars.APP_CLIENT_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -214,10 +169,7 @@ jobs:
           # Create Pull Request pushes with its own token input.
           persist-credentials: false
 
-      # If main moved while the update job was running (up to 45 min), the
-      # result files were generated against an older main and would silently
-      # revert whatever landed in between. Fail closed; the next daily run
-      # starts fresh from the new main.
+      # Reject stale results so they cannot overwrite changes made during update.
       - name: Base commit unchanged
         id: base_check
         if: needs.update.outputs.changed == 'true'
@@ -237,16 +189,13 @@ jobs:
           name: deps-update-result
           path: incoming
 
-      # The result files are attacker-influenced data (the update job runs
-      # freshly-published deps). Validate them with trusted main-side code
-      # before they can reach the PR — see verify-update.mjs.
+      # Validate untrusted artifacts using the verifier checked out from main.
       - name: Verify the result files
         id: verify
         if: needs.update.outputs.changed == 'true'
         run: node .github/scripts/verify-update.mjs incoming
 
-      # A fixed copy list, not a patch: only these six known paths can reach
-      # the PR, whatever the artifact contains.
+      # Copy only these paths, regardless of what else the artifact contains.
       - name: Apply the result files
         if: needs.update.outputs.changed == 'true'
         run: |
@@ -259,19 +208,97 @@ jobs:
           cp incoming/artifacts/pr-body.md artifacts/
           rm -rf incoming
 
+      # If token issuance fails, fall back to a PR for manual review.
+      - name: Issue the App token
+        id: app_token
+        if: >-
+          needs.update.outputs.changed == 'true' && inputs.dry_run != true &&
+          env.APP_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # Limit the token to the permissions this job needs.
+          permission-contents: write
+          permission-pull-requests: write
+
+      # Existing auto-merge survives PR updates. Disable it before publishing
+      # changes that need manual review; stop if lookup or disabling fails.
+      - name: Disarm a leftover auto-merge
+        id: disarm
+        if: >-
+          needs.update.outputs.changed == 'true' && inputs.dry_run != true &&
+          (needs.update.outputs.failed_groups != '' || steps.app_token.outcome != 'success')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          armed_prs=$(
+            gh pr list \
+              --repo "$REPO" \
+              --head bot/deps-update \
+              --base main \
+              --state open \
+              --json url,autoMergeRequest \
+              --jq '
+                .[]
+                | select(.autoMergeRequest != null)
+                | "\(.url) \(.autoMergeRequest.enabledBy.login // "unknown")"
+              '
+          )
+
+          if [ -z "$armed_prs" ]; then
+            echo "No open bot PR with auto-merge armed; nothing to disarm."
+            exit 0
+          fi
+
+          while read -r url enabled_by; do
+            # Record the PR before disabling so Slack can link it on failure.
+            echo "pr_url=$url" >> "$GITHUB_OUTPUT"
+            echo "armed_by=$enabled_by" >> "$GITHUB_OUTPUT"
+
+            gh pr merge --disable-auto "$url"
+            echo "disarmed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Disarmed the auto-merge that $enabled_by had armed on $url; this run will not re-arm it."
+          done <<< "$armed_prs"
+
+      # Only publish knows whether App authentication succeeded.
+      - name: Finish the PR body
+        if: needs.update.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          O_APP_TOKEN: ${{ steps.app_token.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          notice='This run had no App token, so it used github.token, whose pushes leave CI runs waiting for approval: if the checks on this PR are pending approval, press "Approve workflows to run" in the merge box (or close and reopen the PR); then merge once CI passes.'
+          case "$O_APP_TOKEN" in
+            success)
+              note="All checks passed, so the update workflow arms auto-merge — GitHub merges this PR as soon as CI passes on it."
+              notice=""
+              ;;
+            failure)
+              note="All checks passed, but auto-merge is NOT armed: the App token could not be issued (see the 'Issue the App token' step: $RUN_URL)."
+              ;;
+            *)
+              note="All checks passed, but auto-merge is NOT armed: the deps-update GitHub App is not configured (see README for setup)."
+              ;;
+          esac
+          node -e '
+            const fs = require("node:fs");
+            const [note, notice] = process.argv.slice(1);
+            const file = "artifacts/pr-body.md";
+            let body = fs.readFileSync(file, "utf8").replaceAll("{{AUTO_MERGE_NOTE}}", () => note);
+            if (notice) body += `\n${notice}\n`;
+            fs.writeFileSync(file, body);
+          ' "$note" "$notice"
+
       - name: Create Pull Request
         id: cpr
         if: needs.update.outputs.changed == 'true' && inputs.dry_run != true
-        # Third-party action pinned to a commit SHA — this workflow's token
-        # can write contents, so a hijacked tag must not be able to swap the
-        # code underneath us.
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          # github.token works because "Allow GitHub Actions to create and
-          # approve pull requests" is enabled. secrets.PR_TOKEN (fine-grained
-          # PAT) additionally lets CI run on the bot PR and is required for
-          # the Auto-merge step below — see its comment.
-          token: ${{ secrets.PR_TOKEN || github.token }}
+          # Without an App token, leave CI approval and merging to a human.
+          token: ${{ steps.app_token.outputs.token || github.token }}
           branch: bot/deps-update
           delete-branch: true
           title: "chore: bump deps to v${{ needs.update.outputs.next_version }} (${{ needs.update.outputs.delta }})"
@@ -285,59 +312,44 @@ jobs:
             e2e/screenshots/before.png
             e2e/screenshots/after.png
 
-      # writePrBody embeds before/after via bot-branch raw URLs, which 404
-      # once the branch is deleted on merge. Now that the commit exists,
-      # repoint them at its immutable SHA — reachable from main through the
-      # merge commit — so the images keep rendering in the merged PR. If this
-      # step ever fails, the body just keeps the branch URLs (fine while the
-      # PR is open), so it is not mapped into the Slack stage ladder.
+      # SHA URLs keep images visible after branch deletion. On failure,
+      # the original URLs still work while the PR branch exists.
       - name: Point PR-body images at the commit SHA
         if: steps.cpr.outputs.pull-request-url != ''
+        continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.PR_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
           HEAD_SHA: ${{ steps.cpr.outputs.pull-request-head-sha }}
         run: |
           sed "s#/bot/deps-update/#/$HEAD_SHA/#g" artifacts/pr-body.md > pr-body-final.md
           gh pr edit "$PR_URL" --body-file pr-body-final.md
 
-      # Every update in the PR already passed build + e2e in the update job.
-      # A fully-passing run arms GitHub's auto-merge: the PR then merges as
-      # soon as the required CI check passes on it (branch protection),
-      # giving a second, independent gate on the exact merge candidate.
-      # Uses secrets.PR_TOKEN only, never github.token: GitHub suppresses
-      # events from pushes made with github.token, so the merge commit would
-      # trigger neither CI (→ no Release) nor Pages — the chain this repo
-      # relies on. Without PR_TOKEN the PR is left open for a human and
-      # Slack says so. Skipped when any group was excluded: that PR needs a
-      # human to review the exclusions before merging. Branch cleanup after
-      # the merge is handled by the repository setting "Automatically delete
-      # head branches" (or by the next run's delete-branch pass).
-      #
-      # No direct-merge fallback on purpose: if arming auto-merge fails, the
-      # only way a plain merge could still succeed is if the required CI
-      # check were not enforced — exactly the case we must not merge in. So
-      # a failure here fails the job and leaves the PR open (Slack says so).
+      # Use the App token so merging triggers CI, Release and Pages.
+      # Never fall back to a direct merge: the PR must pass required CI first.
       - name: Auto-merge PR
         id: automerge
         if: >-
           steps.cpr.outputs.pull-request-url != '' &&
           needs.update.outputs.failed_groups == ''
         env:
-          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "skipped=no-token" >> "$GITHUB_OUTPUT"
-            echo "::warning::secrets.PR_TOKEN is not set; auto-merge skipped. Merge manually: $PR_URL"
+            echo "::warning::No App token (see the 'Issue the App token' step); auto-merge skipped. Approve the PR's workflows to run CI, then merge: $PR_URL"
             exit 0
           fi
-          gh pr merge "$PR_URL" --auto --merge
+          # Keep this assignment separate so a failed lookup stops the step.
+          armed=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$armed" = "true" ]; then
+            echo "Auto-merge is already armed on $PR_URL; leaving it."
+          else
+            gh pr merge "$PR_URL" --auto --merge
+          fi
           echo "armed=true" >> "$GITHUB_OUTPUT"
 
-      # Message logic (including the 10-day heartbeat) lives in
-      # .github/scripts/notify-slack.sh; this step only maps the update job's
-      # results and this job's step results into its environment.
       - name: Notify Slack
         if: always()
         env:
@@ -352,13 +364,17 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           O_BASE_CHECK: ${{ steps.base_check.outcome }}
           O_VERIFY: ${{ steps.verify.outcome }}
+          O_APP_TOKEN: ${{ steps.app_token.outcome }}
+          O_DISARM: ${{ steps.disarm.outcome }}
+          DISARM_PR_URL: ${{ steps.disarm.outputs.pr_url }}
+          DISARMED: ${{ steps.disarm.outputs.disarmed }}
+          DISARM_ARMED_BY: ${{ steps.disarm.outputs.armed_by }}
           O_CPR: ${{ steps.cpr.outcome }}
+          PR_OPERATION: ${{ steps.cpr.outputs.pull-request-operation }} # created / updated = this run pushed
           O_AUTOMERGE: ${{ steps.automerge.outcome }}
-          MERGED: ${{ steps.automerge.outputs.merged }}
           ARMED: ${{ steps.automerge.outputs.armed }}
           MERGE_SKIPPED: ${{ steps.automerge.outputs.skipped }}
-          # Catch-all for steps the stage map doesn't know: a red job must
-          # never be reported as success or silence (see notify-slack.sh).
+          # Include failures from steps without a dedicated outcome above.
           JOB_STATUS: ${{ job.status }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/notify-slack.sh

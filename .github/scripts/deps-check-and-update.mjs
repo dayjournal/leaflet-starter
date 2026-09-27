@@ -1,22 +1,6 @@
 #!/usr/bin/env node
-// Daily dependency update for .github/workflows/deps-autoupdate.yml.
-//
-// For each group below: pick the newest safe version, pnpm install, build and
-// run e2e. A failing group is rolled back so the others can still go out.
-// Afterwards: bump the project version, rewrite README versions, and write
-// the PR body plus GitHub Actions step outputs (changed / delta /
-// prev_version / next_version / updated_packages / failed_groups).
-//
-// Project version rule: a Leaflet update adopts the Leaflet version itself
-// (1.9.4 -> 1.9.5); any other update increments a fourth segment on top of
-// the current version (1.9.4 -> 1.9.4.1 -> 1.9.4.2). The fourth segment is
-// not semver — fine for git tags and this unpublished package.
-//
-// Run locally: first create the visual baselines the e2e gate diffs against
-// (pnpm exec playwright test e2e/visual.spec.ts --update-snapshots), then
-// node .github/scripts/deps-check-and-update.mjs
-// (touches package.json / pnpm-lock.yaml / README.md / artifacts/, plus
-// node_modules and playwright output)
+// Update and test dependency groups independently, rolling back failed groups.
+// See README for the update policy and local usage.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -26,14 +10,10 @@ const LOCK_PATH = 'pnpm-lock.yaml';
 const README_PATH = 'README.md';
 const ART_DIR = 'artifacts';
 
-// Only adopt versions published at least this many days ago, so a compromised
-// release gets a chance to be yanked before we ever open a PR for it. pnpm
-// enforces the same age gate on every install (including transitive
-// dependencies) via minimumReleaseAge in pnpm-workspace.yaml — keep in sync.
+// Keep in sync with minimumReleaseAge in pnpm-workspace.yaml.
 const MIN_AGE_DAYS = 7;
 
-// Packages in one group are updated and tested together. @types/leaflet rides
-// with leaflet so runtime and types cannot drift apart.
+// Update Leaflet and its types together to avoid mismatches.
 const GROUPS = {
     leaflet: [
         { name: 'leaflet', section: 'dependencies' },
@@ -49,8 +29,8 @@ function main() {
     fs.mkdirSync(ART_DIR, { recursive: true });
 
     const prevVersion = readPkg().version;
-    const applied = []; // updates that passed all checks, e.g. {name, from, to}
-    const failedGroups = []; // e.g. "vite (build)"
+    const applied = [];
+    const failedGroups = [];
     let lastGood = snapshotFiles();
 
     for (const [groupName, packages] of Object.entries(GROUPS)) {
@@ -78,8 +58,6 @@ function main() {
     finalize(prevVersion, applied, failedGroups);
 }
 
-// Set each package of the group to its newest safe version in package.json.
-// Returns the list of updates (empty if the group is already up to date).
 function updateGroup(packages) {
     const pkg = readPkg();
     const updates = [];
@@ -96,16 +74,12 @@ function updateGroup(packages) {
     return updates;
 }
 
-// Pick the newest stable version that is newer than `current`, not newer than
-// the `latest` dist-tag (so a rolled-back latest is respected), and published
-// at least MIN_AGE_DAYS ago. Returns null if there is nothing safe to adopt.
+// Respect a rolled-back latest tag and wait MIN_AGE_DAYS before adopting a release.
 function selectVersion(name, current) {
     if (!parseStable(current)) {
         console.log(`${name}: current version ${current} is not stable x.y.z. Skipping.`);
         return null;
     }
-    // npm view is a plain registry query; it works regardless of the
-    // project's package manager.
     const latest = capture(`npm view "${name}" version`);
     if (!parseStable(latest)) {
         console.log(`${name}: latest tag ${latest} is not a stable version. Skipping.`);
@@ -137,10 +111,8 @@ function selectVersion(name, current) {
     return picked;
 }
 
-// Returns the name of the first failing stage, or null if everything passed.
 function installAndTest() {
-    // --no-frozen-lockfile: pnpm defaults frozen-lockfile to true on CI, but
-    // this script has just changed package.json on purpose.
+    // Allow the lockfile to follow the package.json changes, including on CI.
     if (!tryRun('pnpm install --no-frozen-lockfile')) return 'install';
     if (!tryRun('pnpm run build')) return 'build';
     if (!tryRun('pnpm exec playwright test')) return 'e2e';
@@ -160,8 +132,7 @@ function restoreFiles(snapshot) {
     run('pnpm install --frozen-lockfile');
 }
 
-// Keep the playwright output of a failed group for the run artifacts, before
-// the next group overwrites it.
+// Preserve failure reports before the next group overwrites them.
 function saveFailureReports(groupName) {
     for (const dir of ['test-results', 'playwright-report']) {
         if (fs.existsSync(dir))
@@ -169,7 +140,6 @@ function saveFailureReports(groupName) {
     }
 }
 
-// Project version rule, README versions, PR body, and step outputs.
 function finalize(prevVersion, applied, failedGroups) {
     const outputs = {
         updated_packages: applied.map((u) => u.name).join(', '),
@@ -182,10 +152,7 @@ function finalize(prevVersion, applied, failedGroups) {
         return;
     }
 
-    // Adopt the Leaflet version when Leaflet changed, otherwise increment the
-    // fourth segment (see the header). Never move backward (a Leaflet patch
-    // release arriving after unrelated bumps must not collide with an
-    // existing tag).
+    // Follow Leaflet or bump the fourth segment, without moving backward.
     const leafletUpdate = applied.find((u) => u.name === 'leaflet');
     let nextVersion = leafletUpdate ? leafletUpdate.to : bumpFourth(prevVersion);
     if (compareProjectVersions(nextVersion, prevVersion) <= 0) {
@@ -195,8 +162,6 @@ function finalize(prevVersion, applied, failedGroups) {
     const pkg = readPkg();
     pkg.version = nextVersion;
     writePkg(pkg);
-    // Sync the version field into the lockfile without touching node_modules.
-    // --no-frozen-lockfile: see installAndTest().
     run('pnpm install --lockfile-only --no-frozen-lockfile');
 
     updateReadmeVersions(pkg);
@@ -214,7 +179,6 @@ function finalize(prevVersion, applied, failedGroups) {
 }
 
 function updateReadmeVersions(pkg) {
-    // Each version appears twice: in the English and in the Japanese section.
     let readme = fs.readFileSync(README_PATH, 'utf8');
     readme = readme.replace(/Leaflet v[\d.]+/g, `Leaflet v${versionOf(pkg.dependencies.leaflet)}`);
     readme = readme.replace(
@@ -225,8 +189,6 @@ function updateReadmeVersions(pkg) {
     fs.writeFileSync(README_PATH, readme);
 }
 
-// Writes artifacts/pr-body.md — consumed by the Create Pull Request step's
-// body-path in deps-autoupdate.yml.
 function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
     const lines = [
         'Automated dependency update (scheduled job).',
@@ -241,23 +203,9 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
         '- build (tsc + vite): OK',
         '- e2e smoke + visual diff vs pre-update main + runtime error check: OK',
     ];
-    // before.png / after.png are both committed to the bot branch (see the
-    // "Capture ... comparison image" steps and add-paths in
-    // deps-autoupdate.yml), so both raw URLs resolve while the PR is open with
-    // no dependency on main carrying a baseline. They render the real basemap
-    // from committed offline fixtures (e2e/fixtures/tiles), so the render is
-    // deterministic: any visible difference is a genuine rendering change from
-    // this update (the deterministic pixel-diff gate above stays the
-    // authoritative check). The branch URLs here are a placeholder: right
-    // after the PR is created, the publish job rewrites them to the commit
-    // SHA ("Point PR-body images at the commit SHA"), which stays reachable
-    // through the merge commit — so the images keep rendering after the
-    // branch is deleted on merge. Keep the branch name in sync with that
-    // step's sed pattern and with the Create Pull Request step's `branch:`.
-    //
-    // Guard on before.png only: it is produced before this script runs, whereas
-    // after.png is produced by a later step (guaranteed when there are updates,
-    // and its failure aborts the job before the PR is created).
+    // Publish replaces branch URLs with the commit SHA so images survive branch deletion.
+    // Keep the branch name in sync with the workflow's PR and image steps.
+    // Check only before.png: the workflow captures after.png after this script runs.
     const beforeImg = 'e2e/screenshots/before.png';
     const afterImg = 'e2e/screenshots/after.png';
     if (process.env.GITHUB_REPOSITORY && fs.existsSync(beforeImg)) {
@@ -283,23 +231,18 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
     if (process.env.RUN_URL) {
         lines.push('', `Artifacts (playwright report / visual diffs): ${process.env.RUN_URL}`);
     }
-    // Keep in sync with the Auto-merge step in deps-autoupdate.yml: a PR
-    // with excluded groups is never auto-merged, and without PR_TOKEN
-    // (AUTO_MERGE env, computed by the workflow) nothing merges it either.
+    // Only publish has App credentials, so it fills in the auto-merge notice.
+    // Keep the failed-group rule in sync with the workflow's Auto-merge step.
     const chain =
         'CI then runs on main, the Release workflow tags and publishes the new version, and the Pages workflow redeploys the demo.';
     lines.push(
         '',
         failedGroups.length > 0
             ? `Because some groups failed checks, this PR is NOT auto-merged — review the exclusions, then merge manually. ${chain}`
-            : process.env.AUTO_MERGE === 'true'
-              ? `All checks passed, so the update workflow arms auto-merge — GitHub merges this PR as soon as CI passes on it. ${chain}`
-              : `All checks passed, but auto-merge is disabled (secrets.PR_TOKEN is not set) — merge manually. ${chain}`
+            : `{{AUTO_MERGE_NOTE}} ${chain}`
     );
     fs.writeFileSync(path.join(ART_DIR, 'pr-body.md'), lines.join('\n') + '\n');
 }
-
-// ---- small helpers ---------------------------------------------------------
 
 function run(cmd) {
     execSync(cmd, { stdio: 'inherit' });
@@ -332,8 +275,7 @@ function versionOf(spec) {
     return String(spec || '').replace(/^[^\d]*/, ''); // "^1.9.4" -> "1.9.4"
 }
 
-// Returns [major, minor, patch] for a stable x.y.z version, null otherwise
-// (prereleases like 2.0.0-alpha.1 are rejected on purpose).
+// Reject prereleases; only stable x.y.z versions are eligible.
 function parseStable(version) {
     const m = String(version).match(/^(\d+)\.(\d+)\.(\d+)$/);
     return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
@@ -349,9 +291,7 @@ function compareVersions(a, b) {
     return 0;
 }
 
-// The PROJECT version allows an optional fourth segment ("1.9.4" or
-// "1.9.4.1"); registry versions stay strict three-segment (parseStable) on
-// purpose. Returns [major, minor, patch, fourth].
+// Only project versions allow a fourth segment, e.g. 1.9.4.1.
 function parseProjectVersion(version) {
     const m = String(version).match(/^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/);
     if (!m) throw new Error(`Invalid project version: ${version}`);
