@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Notify once per run; no changes or failures means silence, except the heartbeat.
-# Inputs are defined in the workflow's Notify Slack step.
+# Inputs are defined in the workflow's Notify Slack step, plus
+# GITHUB_REPOSITORY from Actions.
 set -u
 
 lines() { printf '%s\n' "$@"; }
+project="${GITHUB_REPOSITORY:-}"; project="${project#*/}" # owner/name -> name
 
 # Preserve update failures; otherwise check the publish steps in execution order.
 stage="${FAILED_STAGE:-}"
@@ -19,50 +21,50 @@ fi
 # Merge failures need specific recovery steps. Dry runs must never claim a PR exists.
 if [ "$stage" = "auto-merge" ]; then
     text=$(lines \
-        ":x: leaflet-starter deps update: checks passed and the PR was created, but auto-merge FAILED." \
+        ":x: ${project} deps update: checks passed and the PR was created, but auto-merge FAILED." \
         "Updates: ${DELTA:-}" \
         "Nothing was merged. Review and merge manually: ${PR_URL:-${RUN_URL:-}}")
 elif [ "$stage" = "disarm-auto-merge" ]; then
     # No URL means the PR lookup failed before auto-merge could be disabled.
     if [ -n "${DISARM_PR_URL:-}" ]; then
         text=$(lines \
-            ":x: leaflet-starter deps update: could not disarm the auto-merge an earlier run left on the bot PR, so this run did not update it." \
+            ":x: ${project} deps update: could not disarm the auto-merge an earlier run left on the bot PR, so this run did not update it." \
             "The PR may still merge on its own once CI passes on it — disable auto-merge on it by hand, then review: ${DISARM_PR_URL}" \
             "Updates detected: ${DELTA:-none}. Excluded groups: ${FAILED_GROUPS:-none}. Details: ${RUN_URL:-}")
     else
         text=$(lines \
-            ":x: leaflet-starter deps update: could not check the open bot PR for a leftover auto-merge (the lookup failed), so this run did not update it." \
+            ":x: ${project} deps update: could not check the open bot PR for a leftover auto-merge (the lookup failed), so this run did not update it." \
             "If a bot PR is open, check its auto-merge by hand before the next run." \
             "Updates detected: ${DELTA:-none}. Excluded groups: ${FAILED_GROUPS:-none}. Details: ${RUN_URL:-}")
     fi
 elif [ -n "$stage" ]; then
     text=$(lines \
-        ":x: leaflet-starter deps auto-update failed at stage: ${stage}" \
+        ":x: ${project} deps auto-update failed at stage: ${stage}" \
         "Updates detected: ${DELTA:-none}" \
         "Nothing was merged. Artifacts are on the run: ${RUN_URL:-}")
 elif [ "${UPDATE_RESULT:-success}" != "success" ] || [ "${JOB_STATUS:-success}" != "success" ]; then
     # Unmapped failures and cancellations must not report success or stay silent.
     text=$(lines \
-        ":x: leaflet-starter deps auto-update failed (update: ${UPDATE_RESULT:-?}, publish: ${JOB_STATUS:-?})" \
+        ":x: ${project} deps auto-update failed (update: ${UPDATE_RESULT:-?}, publish: ${JOB_STATUS:-?})" \
         "Updates detected: ${DELTA:-none}" \
         "Nothing was merged. Details are on the run: ${RUN_URL:-}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${DRY_RUN:-}" = "true" ]; then
     text=$(lines \
-        ":large_blue_circle: [dry run] leaflet-starter update checks passed: ${DELTA:-}" \
+        ":large_blue_circle: [dry run] ${project} update checks passed: ${DELTA:-}" \
         "Excluded groups (checks failed): ${FAILED_GROUPS:-none}" \
         "No PR created. ${RUN_URL:-}")
 elif [ -n "${FAILED_GROUPS:-}" ] && [ "${CHANGED:-}" = "true" ]; then
     text=$(lines \
-        ":warning: leaflet-starter deps update: some groups failed checks and were excluded: ${FAILED_GROUPS}" \
+        ":warning: ${project} deps update: some groups failed checks and were excluded: ${FAILED_GROUPS}" \
         "NOT auto-merged. PR with the passing updates (${DELTA:-}) needs review: ${PR_URL:-${RUN_URL:-}}")
 elif [ -n "${FAILED_GROUPS:-}" ]; then
     text=$(lines \
-        ":x: leaflet-starter deps update: all update groups failed checks: ${FAILED_GROUPS}" \
+        ":x: ${project} deps update: all update groups failed checks: ${FAILED_GROUPS}" \
         "No PR created, nothing merged. Artifacts are on the run: ${RUN_URL:-}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${ARMED:-}" = "true" ]; then
     text=$(lines \
-        ":white_check_mark: leaflet-starter deps update v${NEXT_VERSION:-} (${DELTA:-}) passed all checks — auto-merge armed." \
-        "GitHub merges the PR as soon as CI passes on it; the release and the Pages deploy follow. ${PR_URL:-${RUN_URL:-}}")
+        ":white_check_mark: ${project} deps update v${NEXT_VERSION:-} (${DELTA:-}) passed all checks — auto-merge armed." \
+        "GitHub merges the PR as soon as CI passes on it; the release follows. ${PR_URL:-${RUN_URL:-}}")
 elif [ "${CHANGED:-}" = "true" ] && [ "${MERGE_SKIPPED:-}" = "no-token" ]; then
     if [ "${O_APP_TOKEN:-}" = "failure" ]; then
         why="the App token could not be issued (App uninstalled, key revoked or permission missing)"
@@ -70,16 +72,16 @@ elif [ "${CHANGED:-}" = "true" ] && [ "${MERGE_SKIPPED:-}" = "no-token" ]; then
         why="the deps-update GitHub App is not configured (vars.APP_CLIENT_ID / secrets.APP_PRIVATE_KEY)"
     fi
     text=$(lines \
-        ":warning: leaflet-starter update PR passed all checks but was NOT auto-merged: ${why}." \
+        ":warning: ${project} update PR passed all checks but was NOT auto-merged: ${why}." \
         "PR: v${NEXT_VERSION:-} (${DELTA:-}) ${PR_URL:-${RUN_URL:-}}")
 elif [ "${CHANGED:-}" = "true" ]; then
     text=$(lines \
-        ":white_check_mark: leaflet-starter update PR is ready for review: v${NEXT_VERSION:-} (${DELTA:-})" \
+        ":white_check_mark: ${project} update PR is ready for review: v${NEXT_VERSION:-} (${DELTA:-})" \
         "Merging it will release automatically. ${PR_URL:-${RUN_URL:-}}")
 elif [ $(( $(date +%s) / 86400 % 10 )) -eq 0 ]; then
     # Count days from the epoch so month boundaries do not affect the interval.
     text=$(lines \
-        ":wave: leaflet-starter deps heartbeat: the daily update check is alive, nothing to update." \
+        ":wave: ${project} deps heartbeat: the daily update check is alive, nothing to update." \
         "Sent every 10 days — if these stop coming, the schedule is no longer running. ${RUN_URL:-}")
 else
     echo "Nothing to notify."

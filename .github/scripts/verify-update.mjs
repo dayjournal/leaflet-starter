@@ -1,39 +1,37 @@
 #!/usr/bin/env node
-// Trusted validator for the deps auto-update flow. Runs in the publish job —
-// from the trusted main checkout, NOT from the artifact — before the result
-// files are copied into place (see the Verify step in deps-autoupdate.yml).
-//
-// The update job installs, builds and tests freshly-published third-party
-// code, so anything it produces (package.json, pnpm-lock.yaml, README.md) is
-// attacker-influenced data. package.json and the lockfile are not inert text:
-// they decide what later runs execute. A compromised release could add a
-// `scripts.postinstall`, downgrade `packageManager` to disable the
-// pnpm-workspace.yaml supply-chain gates, add a dependency, or point the
-// lockfile at a non-registry tarball — and the whole thing would auto-merge.
-//
-// This rejects any change beyond the narrow shape a real update has: the
-// project version, the four managed dependency versions, and the matching
-// README version lines. Anything else fails the run and nothing is merged.
-//
-//   node .github/scripts/verify-update.mjs <incoming-dir>
+// Run this validator from the trusted main checkout before applying artifacts.
+// Allow project and managed dependency version changes, matching README versions,
+// and registry lockfile entries.
+// Usage: node .github/scripts/verify-update.mjs <incoming-dir>
 import fs from 'node:fs';
 import path from 'node:path';
+import { verifyLockfile } from './verify-lockfile.mjs';
+// The config is read from the main checkout too, never from the artifact.
+import { groups, displayNames } from '../deps-config.mjs';
 
 const incoming = process.argv[2];
 if (!incoming) fail('usage: verify-update.mjs <incoming-dir>');
 
 // Only these dependency versions may change, and only to a caret range of a
-// stable x.y.z. Keep in sync with GROUPS in deps-check-and-update.mjs.
-const MANAGED = ['leaflet', '@types/leaflet', 'typescript', 'vite'];
+// stable x.y.z.
+const MANAGED = Object.values(groups).flat();
 const CARET_VERSION = /^\^\d+\.\d+\.\d+$/;
 
 verifyPackageJson();
-verifyLockfile();
+try {
+    verifyLockfile(
+        'pnpm-lock.yaml',
+        path.join(incoming, 'pnpm-lock.yaml'),
+        readJson(path.join(incoming, 'package.json'))
+    );
+} catch (error) {
+    fail(`pnpm-lock.yaml: ${error.message}`);
+}
 verifyReadme();
 console.log('verify-update: OK');
 
 // package.json may differ from main ONLY in `version` and the versions of the
-// four managed dependencies. Every other key — scripts, packageManager,
+// managed dependencies. Every other key — scripts, packageManager,
 // private, name, the set of dependencies — must be byte-for-byte unchanged.
 function verifyPackageJson() {
     const base = readJson('package.json');
@@ -72,32 +70,38 @@ function verifyDeps(section, base = {}, next = {}) {
     }
 }
 
-// The lockfile must reference registry packages only — never a tarball URL,
-// git, link, file or path resolution that could pull in arbitrary code.
-function verifyLockfile() {
-    const lock = read(path.join(incoming, 'pnpm-lock.yaml'));
-    const forbidden = [/tarball:/, /resolution:\s*\{\s*type:\s*git/, /\bgit\+/, /\blink:/, /\bfile:/];
-    for (const pattern of forbidden) {
-        const line = lock.split('\n').find((l) => pattern.test(l));
-        if (line) fail(`pnpm-lock.yaml: non-registry source: ${line.trim()}`);
-    }
-}
-
-// README may differ from main only in the three version lines the update
-// script rewrites (see updateReadmeVersions in deps-check-and-update.mjs).
+// README may differ from main only in the versions the update script writes
+// after "<Name> v" for the names in displayNames (see updateReadmeVersions in
+// deps-check-and-update.mjs): a changed line must have such a version before
+// and after, and nothing else on it may change.
 function verifyReadme() {
     const baseLines = read('README.md').split('\n');
     const nextLines = read(path.join(incoming, 'README.md')).split('\n');
     if (baseLines.length !== nextLines.length) {
         fail('README.md: line count changed');
     }
-    const versionLine = /(Leaflet|TypeScript|Vite) v[\d.]+/;
     for (let i = 0; i < baseLines.length; i++) {
         if (baseLines[i] === nextLines[i]) continue;
-        if (!versionLine.test(baseLines[i]) || !versionLine.test(nextLines[i])) {
+        const before = blankVersions(baseLines[i]);
+        const after = blankVersions(nextLines[i]);
+        const bothVersionLines = before !== baseLines[i] && after !== nextLines[i];
+        if (!bothVersionLines || before !== after) {
             fail(`README.md: unexpected change on line ${i + 1}`);
         }
     }
+}
+
+// "- [Vite v8.3.1](https://vitejs.dev)" -> "- [Vite v](https://vitejs.dev)"
+function blankVersions(line) {
+    for (const displayName of Object.values(displayNames)) {
+        const pattern = new RegExp(`${escapeRegExp(displayName)} v\\d+(?:\\.\\d+)*`, 'g');
+        line = line.replace(pattern, () => `${displayName} v`);
+    }
+    return line;
+}
+
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function read(file) {

@@ -1,18 +1,15 @@
 #!/usr/bin/env node
-// Prints the project version and the leaflet/typescript/vite versions from
-// package.json as GitHub Actions step outputs. Used by the Release workflow:
+// Read package.json in the working directory and emit validated release outputs.
 //   node .github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
 import fs from 'node:fs';
+import { displayNames } from '../deps-config.mjs';
 
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
 // Same normalization as versionOf() in deps-check-and-update.mjs — keep in sync.
 const versionOf = (spec) => String(spec || '').replace(/^[^\d]*/, ''); // "^1.9.4" -> "1.9.4"
 
-// The Release workflow turns these into a git tag and release notes, so only
-// plain digits and dots may leave this script. Anything else — a range, a
-// prerelease, a stray "$(...)" — fails the release instead of reaching the
-// shell. Errors go to stderr: stdout is the $GITHUB_OUTPUT stream.
+// Only plain versions may reach the tag and GitHub Actions outputs.
 const PROJECT_VERSION = /^\d+\.\d+\.\d+(\.\d+)?$/; // fourth segment: see deps-check-and-update.mjs
 const DEP_VERSION = /^\d+\.\d+\.\d+$/;
 
@@ -24,8 +21,11 @@ const checked = (name, value, pattern) => {
     return value;
 };
 
-const dev = pkg.devDependencies;
-console.log(`version=${checked('version', String(pkg.version), PROJECT_VERSION)}`);
-console.log(`leaflet=${checked('leaflet', versionOf(pkg.dependencies?.leaflet), DEP_VERSION)}`);
-console.log(`typescript=${checked('typescript', versionOf(dev?.typescript), DEP_VERSION)}`);
-console.log(`vite=${checked('vite', versionOf(dev?.vite), DEP_VERSION)}`);
+// Check everything before printing, so a bad value leaves no partial output.
+const version = checked('version', String(pkg.version), PROJECT_VERSION);
+const notes = Object.entries(displayNames).map(([name, displayName]) => {
+    const spec = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+    return `- ${displayName} v${checked(name, versionOf(spec), DEP_VERSION)}`;
+});
+console.log(`version=${version}`);
+console.log(['notes<<EOF', ...notes, 'EOF'].join('\n'));

@@ -1,6 +1,6 @@
 name: Dependency Auto Update
 
-# Daily dependency updates. See README for behavior and GitHub App setup.
+# Daily dependency updates. See .github/AUTOMATION.md for behavior and GitHub App setup.
 # Keep secrets out of `update`, which executes new dependencies. Only
 # `publish` receives credentials and handles validated result files as data.
 
@@ -182,6 +182,17 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.update.outputs.changed == 'true'
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      # Install only the validator's pinned tools from the trusted checkout.
+      - name: Install validator tools
+        if: needs.update.outputs.changed == 'true'
+        run: npm ci --prefix .github --ignore-scripts --no-audit --no-fund
+
       - name: Fetch the result files
         if: needs.update.outputs.changed == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -280,7 +291,7 @@ jobs:
               note="All checks passed, but auto-merge is NOT armed: the App token could not be issued (see the 'Issue the App token' step: $RUN_URL)."
               ;;
             *)
-              note="All checks passed, but auto-merge is NOT armed: the deps-update GitHub App is not configured (see README for setup)."
+              note="All checks passed, but auto-merge is NOT armed: the deps-update GitHub App is not configured (setup: .github/AUTOMATION.md)."
               ;;
           esac
           node -e '
@@ -325,7 +336,7 @@ jobs:
           sed "s#/bot/deps-update/#/$HEAD_SHA/#g" artifacts/pr-body.md > pr-body-final.md
           gh pr edit "$PR_URL" --body-file pr-body-final.md
 
-      # Use the App token so merging triggers CI, Release and Pages.
+      # Use the App token so merging triggers CI and the release.
       # Never fall back to a direct merge: the PR must pass required CI first.
       - name: Auto-merge PR
         id: automerge

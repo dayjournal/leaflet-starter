@@ -9,20 +9,15 @@ name: Release
 permissions:
   contents: write
 
-# One release at a time: two overlapping runs could both see the tag missing
-# and race to push it. cancel-in-progress: false so a queued run still gets
-# to tag its own commit rather than being dropped.
+# Serialize releases so two runs cannot create the same tag.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    # This job holds a contents:write token, so it must only ever act on this
-    # repository's own main pushes. A fork PR whose head branch is named
-    # "main" also matches the branches filter above; without the event and
-    # head_repository checks its code would run here with write access — the
-    # pwn-request pattern GitHub warns about in the Secure use reference.
+    # This job has write access. A fork PR can name its head branch "main",
+    # so check the event and the source repository, not only the branch.
     if: >-
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success' &&
@@ -35,9 +30,20 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
-          # Credentials stay persisted on purpose: the Create tag step pushes
-          # with them, and this job runs no third-party project code.
+          # Keep credentials for the tag push.
           persist-credentials: true
+
+      # Use this workflow's scripts even when CI ran on an older commit.
+      - name: Check out release tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/read-versions.mjs
+            .github/deps-config.mjs
+          sparse-checkout-cone-mode: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -48,24 +54,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Fails the run if package.json holds anything but a plain version
-      # number, so nothing unexpected reaches the shell steps below.
       - name: Read versions from package.json
         id: v
-        run: node .github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
+        run: node .release-tools/.github/scripts/read-versions.mjs >> "$GITHUB_OUTPUT"
 
-      # Tag and Release are checked separately so the two steps can recover
-      # independently: if the tag pushed but the Release action then failed,
-      # the next main run re-creates only the missing Release instead of
-      # skipping both because the tag now exists.
+      # A failed release can leave a tag behind, so check both.
       - name: Check tag and release existence
         id: tag
         env:
           VERSION: ${{ steps.v.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # refs/tags/ so a branch or file of the same name cannot answer for
-          # the tag.
           if git rev-parse --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -87,15 +86,8 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.tag.outputs.release_exists != 'true'
-        # Third-party action pinned to a commit SHA; it runs with a
-        # contents:write token.
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        # with: inputs reach the action as data, never a shell, so expressions
-        # are safe here.
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: v${{ steps.v.outputs.version }}
-          body: |
-            - Leaflet v${{ steps.v.outputs.leaflet }}
-            - TypeScript v${{ steps.v.outputs.typescript }}
-            - Vite v${{ steps.v.outputs.vite }}
+          body: ${{ steps.v.outputs.notes }}
