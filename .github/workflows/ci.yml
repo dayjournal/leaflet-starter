@@ -37,6 +37,11 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
 
+      - name: Test update validator
+        run: |
+          npm ci --prefix .github --ignore-scripts --no-audit --no-fund
+          node --test .github/scripts/verify-update.test.mjs
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
 
@@ -78,10 +83,11 @@ jobs:
             echo "::warning::SLACK_WEBHOOK_URL secret is not set. Skipped notification."
             exit 0
           fi
+          project="${GITHUB_REPOSITORY#*/}" # owner/name -> name
           if [ "$ON_MAIN" = "true" ]; then
-            text=":x: leaflet-starter CI $CI_RESULT on main — the release is blocked until this is fixed. Pages only deploys after CI passes, so the demo still shows the last good commit. $RUN_URL"
+            text=":x: $project CI $CI_RESULT on main — the release is blocked until this is fixed. $RUN_URL"
           else
-            text=":x: leaflet-starter CI $CI_RESULT on the bot deps PR — auto-merge will not fire and the PR stays open: ${PR_URL:-$RUN_URL}"
+            text=":x: $project CI $CI_RESULT on the bot deps PR — auto-merge will not fire and the PR stays open: ${PR_URL:-$RUN_URL}"
           fi
           jq -n --arg text "$text" '{text: $text}' |
             curl -sf -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL" ||

@@ -1,8 +1,8 @@
 version: 2
 
 updates:
-  # Keeps the SHA-pinned Actions moving: deps-autoupdate.yml only covers
-  # leaflet / typescript / vite, and a pinned SHA never updates itself.
+  # Keeps the SHA-pinned Actions moving: deps-autoupdate.yml only covers the
+  # packages in deps-config.mjs, and a pinned SHA never updates itself.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -10,6 +10,18 @@ updates:
     # One PR a week for all Actions instead of one per action.
     groups:
       actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+
+  # The lockfile validator's pinned tools (.github/package.json).
+  - package-ecosystem: npm
+    directory: "/.github"
+    schedule:
+      interval: weekly
+    groups:
+      validator-tools:
         patterns:
           - "*"
     labels:

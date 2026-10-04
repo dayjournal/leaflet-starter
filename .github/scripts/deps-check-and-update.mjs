@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Update and test dependency groups independently, rolling back failed groups.
-// See README for the update policy and local usage.
+// Which versions qualify: selectVersion(). Setup and local usage: .github/AUTOMATION.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { groups, projectVersionFollows, displayNames } from '../deps-config.mjs';
 
 const PKG_PATH = 'package.json';
 const LOCK_PATH = 'pnpm-lock.yaml';
@@ -13,19 +14,10 @@ const ART_DIR = 'artifacts';
 // Keep in sync with minimumReleaseAge in pnpm-workspace.yaml.
 const MIN_AGE_DAYS = 7;
 
-// Update Leaflet and its types together to avoid mismatches.
-const GROUPS = {
-    leaflet: [
-        { name: 'leaflet', section: 'dependencies' },
-        { name: '@types/leaflet', section: 'devDependencies' },
-    ],
-    typescript: [{ name: 'typescript', section: 'devDependencies' }],
-    vite: [{ name: 'vite', section: 'devDependencies' }],
-};
-
 main();
 
 function main() {
+    checkConfig();
     fs.mkdirSync(ART_DIR, { recursive: true });
 
     const prevVersion = readPkg().version;
@@ -33,7 +25,7 @@ function main() {
     const failedGroups = [];
     let lastGood = snapshotFiles();
 
-    for (const [groupName, packages] of Object.entries(GROUPS)) {
+    for (const [groupName, packages] of Object.entries(groups)) {
         console.log(`::group::${groupName}`);
         const updates = updateGroup(packages);
         if (updates.length === 0) {
@@ -58,11 +50,51 @@ function main() {
     finalize(prevVersion, applied, failedGroups);
 }
 
+// deps-config.mjs is written by hand for each repository, so check it against
+// package.json and README.md before changing anything.
+function checkConfig() {
+    for (const [groupName, packages] of Object.entries(groups)) {
+        if (!Array.isArray(packages)) {
+            throw new Error(`groups.${groupName} must be an array of package names`);
+        }
+    }
+    const pkg = readPkg();
+    const grouped = Object.values(groups).flat();
+    for (const name of grouped) {
+        sectionOf(pkg, name); // throws unless in exactly one section
+    }
+    if (!grouped.includes(projectVersionFollows)) {
+        throw new Error(`projectVersionFollows: ${projectVersionFollows} is not in groups`);
+    }
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+    for (const [name, displayName] of Object.entries(displayNames)) {
+        if (!grouped.includes(name)) {
+            throw new Error(`displayNames: ${name} is not in groups`);
+        }
+        // Match what updateReadmeVersions rewrites, not prose such as "Vite vs webpack".
+        if (!new RegExp(`${escapeRegExp(displayName)} v\\d`).test(readme)) {
+            throw new Error(
+                `displayNames: "${displayName} v<version>" does not occur in ${README_PATH}`
+            );
+        }
+        // "Foo v" also matches inside "Big Foo v2.0.0", so no display name may
+        // end with another.
+        for (const [otherName, otherDisplayName] of Object.entries(displayNames)) {
+            if (otherName !== name && otherDisplayName.endsWith(displayName)) {
+                throw new Error(
+                    `displayNames: ${otherName} "${otherDisplayName}" ends with ${name} "${displayName}"`
+                );
+            }
+        }
+    }
+}
+
 function updateGroup(packages) {
     const pkg = readPkg();
     const updates = [];
-    for (const { name, section } of packages) {
-        const current = versionOf(pkg[section]?.[name]);
+    for (const name of packages) {
+        const section = sectionOf(pkg, name);
+        const current = versionOf(pkg[section][name]);
         if (!current) continue;
         const next = selectVersion(name, current);
         if (!next) continue;
@@ -152,9 +184,9 @@ function finalize(prevVersion, applied, failedGroups) {
         return;
     }
 
-    // Follow Leaflet or bump the fourth segment, without moving backward.
-    const leafletUpdate = applied.find((u) => u.name === 'leaflet');
-    let nextVersion = leafletUpdate ? leafletUpdate.to : bumpFourth(prevVersion);
+    // Follow the configured package or bump the fourth segment, without moving backward.
+    const followed = applied.find((u) => u.name === projectVersionFollows);
+    let nextVersion = followed ? followed.to : bumpFourth(prevVersion);
     if (compareProjectVersions(nextVersion, prevVersion) <= 0) {
         nextVersion = bumpFourth(prevVersion);
     }
@@ -180,12 +212,13 @@ function finalize(prevVersion, applied, failedGroups) {
 
 function updateReadmeVersions(pkg) {
     let readme = fs.readFileSync(README_PATH, 'utf8');
-    readme = readme.replace(/Leaflet v[\d.]+/g, `Leaflet v${versionOf(pkg.dependencies.leaflet)}`);
-    readme = readme.replace(
-        /TypeScript v[\d.]+/g,
-        `TypeScript v${versionOf(pkg.devDependencies.typescript)}`
-    );
-    readme = readme.replace(/Vite v[\d.]+/g, `Vite v${versionOf(pkg.devDependencies.vite)}`);
+    for (const [name, displayName] of Object.entries(displayNames)) {
+        const version = versionOf(pkg[sectionOf(pkg, name)][name]);
+        // "Vite v8.3.1." at the end of a sentence keeps its full stop.
+        const pattern = new RegExp(`${escapeRegExp(displayName)} v\\d+(?:\\.\\d+)*`, 'g');
+        // A replacer function keeps a "$" in the name literal.
+        readme = readme.replace(pattern, () => `${displayName} v${version}`);
+    }
     fs.writeFileSync(README_PATH, readme);
 }
 
@@ -200,8 +233,8 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
         `- ${prevVersion} → ${nextVersion}`,
         '',
         '## Checks (already run in the update workflow, per group)',
-        '- build (tsc + vite): OK',
-        '- e2e smoke + visual diff vs pre-update main + runtime error check: OK',
+        '- build: OK',
+        '- e2e (all Playwright specs, including the visual diff vs pre-update main): OK',
     ];
     // Publish replaces branch URLs with the commit SHA so images survive branch deletion.
     // Keep the branch name in sync with the workflow's PR and image steps.
@@ -234,7 +267,7 @@ function writePrBody(applied, prevVersion, nextVersion, failedGroups) {
     // Only publish has App credentials, so it fills in the auto-merge notice.
     // Keep the failed-group rule in sync with the workflow's Auto-merge step.
     const chain =
-        'CI then runs on main, the Release workflow tags and publishes the new version, and the Pages workflow redeploys the demo.';
+        'CI then runs on main and the Release workflow tags and publishes the new version.';
     lines.push(
         '',
         failedGroups.length > 0
@@ -271,8 +304,20 @@ function writePkg(pkg) {
     fs.writeFileSync(PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
 }
 
+function sectionOf(pkg, name) {
+    const sections = ['dependencies', 'devDependencies'].filter((s) => pkg[s]?.[name]);
+    if (sections.length !== 1) {
+        throw new Error(`${name} must be in exactly one of dependencies and devDependencies`);
+    }
+    return sections[0];
+}
+
 function versionOf(spec) {
     return String(spec || '').replace(/^[^\d]*/, ''); // "^1.9.4" -> "1.9.4"
+}
+
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Reject prereleases; only stable x.y.z versions are eligible.
