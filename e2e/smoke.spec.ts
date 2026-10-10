@@ -2,11 +2,12 @@ import {
     test,
     expect,
     stabilizeTileRequests,
+    waitForMapReady,
     expectValidTileRequests,
     MAP_READY_TIMEOUT_MS,
 } from './_helpers';
 
-test('smoke: page loads, Leaflet initializes, and tile URLs are well-formed', async ({ page }) => {
+test('smoke: Leaflet renders loaded tiles', async ({ page }) => {
     const tileUrls = await stabilizeTileRequests(page);
 
     await page.goto('/');
@@ -18,5 +19,6 @@ test('smoke: page loads, Leaflet initializes, and tile URLs are well-formed', as
         timeout: MAP_READY_TIMEOUT_MS,
     });
 
+    await waitForMapReady(page);
     await expectValidTileRequests(tileUrls);
 });

@@ -4,6 +4,13 @@
 The tests serve these files locally so screenshots do not depend on the network.
 Requests without a saved tile use `fallback.png`.
 
+Every request is validated before the fixture response: `{z}/{x}/{y}` must be
+non-negative safe integers, with `x < 2 ** z` and `y < 2 ** z` for Web Mercator.
+Both smoke and visual tests wait until all tile images have loaded successfully
+(`complete` and `naturalWidth > 0`), have the `leaflet-tile-loaded` class, and
+have finished fading in. A completed image with zero width fails the test with
+its tile URL.
+
 ## Update map tiles
 
 When the map center, zoom, or viewport changes:

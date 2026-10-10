@@ -8,9 +8,8 @@ const TILES_DIR = path.join(__dirname, 'fixtures', 'tiles');
 // Missing tiles use a gray grid so tile placement remains visible.
 const TILE_PNG = fs.readFileSync(path.join(__dirname, 'fixtures', 'fallback.png'));
 
-// Checked by expectValidTileRequests: a {z}/{x}/{y} placeholder left in a
-// tile URL would otherwise hide behind the fulfilled fixtures.
-const TILE_URL_PATTERN = /\/mierune_mono\/\d+\/\d+\/\d+\.png$/;
+// Validate each request before a fixture can hide an invalid tile URL.
+const TILE_URL_PATTERN = /\/mierune_mono\/(\d+)\/(\d+)\/(\d+)\.png$/;
 // A 1280x720 viewport requests ~20+ tiles; well below that means the map broke.
 const MIN_EXPECTED_TILES = 12;
 // Budget for the map to fully come up (tiles requested / loaded / faded in).
@@ -51,7 +50,11 @@ async function stabilizeTileRequests(page: Page): Promise<string[]> {
     await page.route('https://tile.mierune.co.jp/**', async (route) => {
         const url = route.request().url();
         tileUrls.push(url);
-        const m = url.match(/\/mierune_mono\/(\d+)\/(\d+)\/(\d+)\.png$/);
+        expect(
+            tileLevel(url),
+            `tile URL should contain numeric {z}/{x}/{y} within range: ${url}`
+        ).toBeGreaterThanOrEqual(0);
+        const m = TILE_URL_PATTERN.exec(url);
         const fixture = m ? path.join(TILES_DIR, m[1], m[2], `${m[3]}.png`) : null;
         const body = fixture && fs.existsSync(fixture) ? fs.readFileSync(fixture) : TILE_PNG;
         try {
@@ -72,6 +75,44 @@ async function stabilizeTileRequests(page: Page): Promise<string[]> {
     return tileUrls;
 }
 
+// Web Mercator has 2^z tiles per axis at level z.
+function tileLevel(url: string): number {
+    const match = TILE_URL_PATTERN.exec(url);
+    if (!match) return -1;
+    const [z, x, y] = match.slice(1).map(Number);
+    const tilesPerAxis = 2 ** z;
+    return [z, x, y].every(Number.isSafeInteger) &&
+        Number.isFinite(tilesPerAxis) &&
+        x < tilesPerAxis &&
+        y < tilesPerAxis
+        ? z
+        : -1;
+}
+
+async function waitForMapReady(page: Page) {
+    await page.waitForFunction(
+        () => {
+            const tiles = Array.from(
+                document.querySelectorAll<HTMLImageElement>('#map .leaflet-tile')
+            );
+            const failed = tiles.find((tile) => tile.complete && tile.naturalWidth === 0);
+            if (failed) throw new Error(`tile load failed: ${failed.currentSrc || failed.src}`);
+            return (
+                tiles.length > 0 &&
+                tiles.every(
+                    (tile) =>
+                        tile.complete &&
+                        tile.naturalWidth > 0 &&
+                        tile.classList.contains('leaflet-tile-loaded') &&
+                        getComputedStyle(tile).opacity === '1'
+                )
+            );
+        },
+        undefined,
+        { timeout: MAP_READY_TIMEOUT_MS }
+    );
+}
+
 async function expectValidTileRequests(tileUrls: string[]) {
     await expect
         .poll(() => tileUrls.length, {
@@ -79,8 +120,8 @@ async function expectValidTileRequests(tileUrls: string[]) {
             timeout: MAP_READY_TIMEOUT_MS,
         })
         .toBeGreaterThanOrEqual(MIN_EXPECTED_TILES);
-    const invalid = tileUrls.filter((url) => !TILE_URL_PATTERN.test(url));
-    expect(invalid, 'tile URLs should contain numeric {z}/{x}/{y}').toEqual([]);
+    const invalid = tileUrls.filter((url) => tileLevel(url) < 0);
+    expect(invalid, 'tile URLs should contain numeric {z}/{x}/{y} within range').toEqual([]);
 }
 
-export { expect, test, stabilizeTileRequests, expectValidTileRequests };
+export { expect, test, stabilizeTileRequests, waitForMapReady, expectValidTileRequests };
