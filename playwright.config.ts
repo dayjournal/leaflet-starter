@@ -33,7 +33,7 @@ export default defineConfig({
             timeout: 120_000,
         },
         {
-            // Build with the Pages base; keep generated files out of the committed docs/.
+            // Build separately with the Pages base for the subpath check.
             command:
                 'pnpm exec vite build --base /leaflet-starter/ --outDir dist-subpath && pnpm exec vite preview --base /leaflet-starter/ --outDir dist-subpath --host 127.0.0.1 --port 4174',
             url: 'http://127.0.0.1:4174/leaflet-starter/',

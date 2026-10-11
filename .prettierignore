@@ -11,7 +11,7 @@ package-lock.json
 # README relies on trailing-space hard line breaks and hand-tuned spacing.
 *.md
 
-# Build outputs (docs/ is the committed Pages build in starters that have one)
+# Build outputs (Pages deploys dist/; docs/ is for local compatibility checks)
 dist/
 dist-subpath/
 docs/
