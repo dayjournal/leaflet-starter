@@ -15,8 +15,7 @@ Copy as they are:
 - `.github/scripts/` (every file)
 - `.github/package.json`, `.github/package-lock.json` (validator tools)
 - `.github/dependabot.yml`, `.github/CODEOWNERS`, `.github/AUTOMATION.md`
-- `pnpm-workspace.yaml`, `playwright.config.ts`, `.prettierignore`, `.node-version`
-- `e2e/_helpers.ts` and `e2e/fixtures/`
+- `pnpm-workspace.yaml`, `.prettierignore`, `.node-version`
 - the `.gitignore` entries for `artifacts/`, `.playwright-snapshots/`, `test-results/`
   and `playwright-report/`
 
@@ -26,8 +25,9 @@ Edit for the repository:
   follows, and the names shown in README and release notes
 - `pnpm-workspace.yaml`, `allowBuilds`: whatever `pnpm install` reports for this
   repository's dependencies
-- `e2e/smoke.spec.ts` and `e2e/visual.spec.ts`: the map library's own readiness
-  checks
+- `playwright.config.ts`: root/subpath projects and library-specific preview builds
+- `e2e/_helpers.ts`, `e2e/fixtures/`, `e2e/smoke.spec.ts` and
+  `e2e/visual.spec.ts`: the map library's own fixtures and readiness checks
 
 Remove: the root `package-lock.json`, any older update workflow or script, a tracked
 `artifacts/` folder.
@@ -48,8 +48,10 @@ bot only commits package.json, the lockfile, README and the two screenshots.
 - `scripts.build` runs `tsc` before `vite build`, so a TypeScript update is
   type-checked
 - `e2e/smoke.spec.ts` and `e2e/visual.spec.ts`, with exactly one
-  `toHaveScreenshot('map.png', ...)` (the workflow copies `map-*.png` onto one
-  file) and `snapshotDir: '.playwright-snapshots'`; the tests use no network
+  `toHaveScreenshot('map.png', ...)`, projects named `root` and `subpath`,
+  `snapshotDir: '.playwright-snapshots'` and `updateSnapshots: 'none'`. The
+  workflow tests both projects and copies `map-root-linux.png` for the PR
+  comparison image. The tests use no network
   and no secrets, tiles come from the committed fixtures, and `test` from
   `e2e/_helpers.ts` fails a spec on page errors
 - README lines of the form `<Name> vX.Y.Z` for every entry in `displayNames`,

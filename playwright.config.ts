@@ -12,22 +12,33 @@ export default defineConfig({
     // committed. .github/workflows/deps-autoupdate.yml regenerates the baseline
     // from pre-update main (--update-snapshots) before comparing.
     snapshotDir: '.playwright-snapshots',
+    // Baselines are created only by an explicit --update-snapshots run.
+    updateSnapshots: 'none',
     use: {
-        baseURL: 'http://127.0.0.1:4173',
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
         // Make renders more deterministic in CI.
         colorScheme: 'light',
-        // reducedMotion is a context option, not a top-level `use` option —
-        // outside contextOptions it would be silently ignored.
-        contextOptions: { reducedMotion: 'reduce' },
+        reducedMotion: 'reduce',
     },
-    webServer: {
-        // `vite preview` serves the existing dist/ build — run `pnpm run build`
-        // first (as ci.yml does), or the tests hit a stale or missing build.
-        command: 'pnpm run preview --host 127.0.0.1 --port 4173',
-        url: 'http://127.0.0.1:4173',
-        reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
-    },
+    projects: [
+        { name: 'root', use: { baseURL: 'http://127.0.0.1:4173/' } },
+        { name: 'subpath', use: { baseURL: 'http://127.0.0.1:4174/leaflet-starter/' } },
+    ],
+    webServer: [
+        {
+            command: 'pnpm run preview --host 127.0.0.1 --port 4173',
+            url: 'http://127.0.0.1:4173/',
+            reuseExistingServer: !process.env.CI,
+            timeout: 120_000,
+        },
+        {
+            // Build with the Pages base; keep generated files out of the committed docs/.
+            command:
+                'pnpm exec vite build --base /leaflet-starter/ --outDir dist-subpath && pnpm exec vite preview --base /leaflet-starter/ --outDir dist-subpath --host 127.0.0.1 --port 4174',
+            url: 'http://127.0.0.1:4174/leaflet-starter/',
+            reuseExistingServer: !process.env.CI,
+            timeout: 120_000,
+        },
+    ],
 });

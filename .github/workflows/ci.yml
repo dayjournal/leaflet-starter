@@ -43,6 +43,7 @@ jobs:
           node --test .github/scripts/verify-update.test.mjs
 
       - run: pnpm install --frozen-lockfile
+      - run: pnpm run format:check
       - run: pnpm run build
 
       # E2E smoke (no snapshot baseline required)

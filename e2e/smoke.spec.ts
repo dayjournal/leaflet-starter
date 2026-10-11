@@ -10,7 +10,7 @@ import {
 test('smoke: Leaflet renders loaded tiles', async ({ page }) => {
     const tileUrls = await stabilizeTileRequests(page);
 
-    await page.goto('/');
+    await page.goto('./');
     await expect(page.locator('#map')).toBeVisible();
 
     // L.map('map') adds the .leaflet-container class to #map itself, so this
