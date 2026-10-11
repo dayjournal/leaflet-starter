@@ -74,7 +74,7 @@ jobs:
         id: before_img
         run: |
           mkdir -p e2e/screenshots
-          cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/before.png
+          cp .playwright-snapshots/visual.spec.ts-snapshots/map-root-linux.png e2e/screenshots/before.png
 
       - name: Update dependencies
         id: update
@@ -90,7 +90,7 @@ jobs:
           pnpm run build
           pnpm exec playwright test e2e/visual.spec.ts --update-snapshots
           mkdir -p e2e/screenshots
-          cp .playwright-snapshots/visual.spec.ts-snapshots/map-*.png e2e/screenshots/after.png
+          cp .playwright-snapshots/visual.spec.ts-snapshots/map-root-linux.png e2e/screenshots/after.png
 
       # Transfer only the files publish is allowed to commit.
       - name: Hand the result files to the publish job

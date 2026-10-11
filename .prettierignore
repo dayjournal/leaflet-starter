@@ -13,5 +13,6 @@ package-lock.json
 
 # Build outputs (docs/ is the committed Pages build in starters that have one)
 dist/
+dist-subpath/
 docs/
 artifacts/
