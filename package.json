@@ -1,6 +1,6 @@
 {
   "name": "leaflet-starter",
-  "version": "1.9.4.13",
+  "version": "1.9.4.14",
   "private": true,
   "description": "Start Leaflet easily with TypeScript and Vite",
   "scripts": {
@@ -28,7 +28,7 @@
     "@types/node": "^24.19.1",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2",
-    "vite": "^8.3.2"
+    "vite": "^8.3.3"
   },
   "dependencies": {
     "leaflet": "^1.9.4"
