@@ -4,8 +4,11 @@
 The tests serve these files locally so screenshots do not depend on the network.
 Requests without a saved tile use `fallback.png`.
 
-Every request is validated before the fixture response: `{z}/{x}/{y}` must be
-non-negative safe integers, with `x < 2 ** z` and `y < 2 ** z` for Web Mercator.
+Every request is validated before the fixture response: the whole URL must be
+`https://tile.mierune.co.jp/mierune_mono/{z}/{x}/{y}.png`, with non-negative
+safe integers and `x < 2 ** z`, `y < 2 ** z` for Web Mercator. A request that
+fails the check is aborted instead of answered, and the test lists it. Any
+other request that leaves the preview server is aborted and fails the test.
 Both smoke and visual tests wait until all tile images have loaded successfully
 (`complete` and `naturalWidth > 0`), have the `leaflet-tile-loaded` class, and
 have finished fading in. A completed image with zero width fails the test with

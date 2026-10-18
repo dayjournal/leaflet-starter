@@ -4,6 +4,19 @@ name: Deploy GitHub Pages
 # so the published demo can never go stale relative to the merged code and a
 # commit that fails CI is never published. The repository's Pages settings
 # must have "GitHub Actions" as the source.
+#
+# CI runs finish in any order and an old run can be re-run, so a completed run
+# is not proof that its commit is still the tip of main, or that CI still
+# passes for it. scripts/pages-target.mjs asks the GitHub API for both: the
+# commit must be the tip of main, and the latest push CI run for that exact
+# commit must have succeeded. The check job runs it before anything enters a
+# concurrency group, so a stale run normally ends there; the deploy job runs
+# it again right before publishing. The check and the entry into a group are
+# separate steps, and GitHub orders a group by arrival, not by commit, so the
+# groups below are chosen so that a run which became stale in between can
+# never cancel or replace the run for a newer commit. A manual run
+# (workflow_dispatch) must be started on main and passes the same checks: it
+# republishes the current main and cannot bypass failed or unfinished CI.
 
 "on":
   workflow_run:
@@ -15,29 +28,70 @@ name: Deploy GitHub Pages
 permissions:
   contents: read
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
+  check:
     # Same guard as the Release workflow: only this repository's own main
     # pushes may reach the deploy job (a fork PR whose head branch is named
-    # "main" also matches the branches filter above). workflow_dispatch stays
-    # available for a manual redeploy.
+    # "main" also matches the branches filter above). A manual run must be
+    # started on main. pages-target.mjs applies the same conditions again,
+    # together with the tip-of-main and CI checks.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # The CI run history of the commit.
+      actions: read
+    outputs:
+      deploy: ${{ steps.target.outputs.deploy }}
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      # The script from this workflow's own commit, nothing else.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            .github/scripts/pages-target.mjs
+            .node-version
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      # A failed API request fails the job: an unanswered check must not
+      # pass as a skipped run.
+      - name: Require the tip of main with successful CI
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/pages-target.mjs
+
+  build:
+    needs: check
+    if: needs.check.outputs.deploy == 'true'
+    # One group per commit: only another run for the same commit (a CI re-run
+    # or a manual run) replaces a build that is still running. Builds of
+    # different commits never cancel each other, so a run that passed the
+    # check but entered the group after the run for a newer commit cannot take
+    # that newer build down. Such a stale build only costs its minutes; the
+    # deploy job skips it.
+    concurrency:
+      group: pages-build-${{ needs.check.outputs.sha }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The commit CI just validated; for a manual run, the dispatched ref.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # The commit CI validated, as confirmed by the check job.
+          ref: ${{ needs.check.outputs.sha }}
           # Nothing here pushes; keep the token out of .git/config during the
           # dependency build.
           persist-credentials: false
@@ -68,17 +122,55 @@ jobs:
   # and builds third-party dependencies. configure-pages lives here because
   # it reads the Pages settings and the build job has no pages permission.
   deploy:
-    needs: build
+    needs: [check, build]
+    # One deployment at a time, never cancelled midway. `queue: max` keeps
+    # every waiting run (up to 100, then further runs are cancelled) instead
+    # of GitHub's default of one, so a stale run that arrives late cannot
+    # replace a waiting run for a newer commit. The queue is ordered by
+    # arrival, not by commit, so the check below decides when each run gets
+    # its turn: a run whose commit stopped being the tip of main, or whose CI
+    # no longer passes, while it waited or built is skipped. (`queue: max`
+    # cannot be combined with cancel-in-progress: true.)
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      # Reading the tip of main and the CI runs for the recheck.
+      contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # The script from this workflow's own commit, nothing else.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            .github/scripts/pages-target.mjs
+            .node-version
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Recheck main and CI right before publishing
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The commit the build job checked out; anything else fails the job.
+          PAGES_TARGET_SHA: ${{ needs.check.outputs.sha }}
+        run: node .github/scripts/pages-target.mjs
+
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        if: steps.target.outputs.deploy == 'true'
 
       - id: deployment
+        if: steps.target.outputs.deploy == 'true'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
