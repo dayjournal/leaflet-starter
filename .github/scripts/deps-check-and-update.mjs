@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Update and test dependency groups independently, rolling back failed groups.
-// Which versions qualify: selectVersion(). Setup and local usage: .github/AUTOMATION.md.
+// Which versions qualify: selectVersion() in select-version.mjs. Setup and local
+// usage: .github/AUTOMATION.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { groups, projectVersionFollows, displayNames } from '../deps-config.mjs';
+import { selectVersion, parseStable, compareVersions } from './select-version.mjs';
 
 const PKG_PATH = 'package.json';
 const LOCK_PATH = 'pnpm-lock.yaml';
@@ -96,7 +98,7 @@ function updateGroup(packages) {
         const section = sectionOf(pkg, name);
         const current = versionOf(pkg[section][name]);
         if (!current) continue;
-        const next = selectVersion(name, current);
+        const next = selectVersion(name, current, { capture, minAgeDays: MIN_AGE_DAYS });
         if (!next) continue;
         pkg[section][name] = `^${next}`;
         updates.push({ name, from: current, to: next });
@@ -104,43 +106,6 @@ function updateGroup(packages) {
     }
     if (updates.length > 0) writePkg(pkg);
     return updates;
-}
-
-// Respect a rolled-back latest tag and wait MIN_AGE_DAYS before adopting a release.
-function selectVersion(name, current) {
-    if (!parseStable(current)) {
-        console.log(`${name}: current version ${current} is not stable x.y.z. Skipping.`);
-        return null;
-    }
-    const latest = capture(`npm view "${name}" version`);
-    if (!parseStable(latest)) {
-        console.log(`${name}: latest tag ${latest} is not a stable version. Skipping.`);
-        return null;
-    }
-    if (compareVersions(latest, current) < 0) {
-        console.log(
-            `${name}: latest ${latest} is older than current ${current} (dist-tag rollback?). Skipping.`
-        );
-        return null;
-    }
-    if (compareVersions(latest, current) === 0) return null;
-
-    const publishDates = JSON.parse(capture(`npm view "${name}" time --json`));
-    const cutoff = Date.now() - MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
-    let picked = null;
-    for (const [version, published] of Object.entries(publishDates)) {
-        if (!parseStable(version)) continue; // skips prereleases and the created/modified keys
-        if (Date.parse(published) > cutoff) continue;
-        if (compareVersions(version, current) <= 0) continue;
-        if (compareVersions(version, latest) > 0) continue;
-        if (!picked || compareVersions(version, picked) > 0) picked = version;
-    }
-    if (!picked) {
-        console.log(
-            `${name}: ${latest} is newer than ${current} but not ${MIN_AGE_DAYS} days old yet. Waiting.`
-        );
-    }
-    return picked;
 }
 
 function installAndTest() {
@@ -321,21 +286,6 @@ function escapeRegExp(text) {
 }
 
 // Reject prereleases; only stable x.y.z versions are eligible.
-function parseStable(version) {
-    const m = String(version).match(/^(\d+)\.(\d+)\.(\d+)$/);
-    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-function compareVersions(a, b) {
-    const pa = parseStable(a);
-    const pb = parseStable(b);
-    if (!pa || !pb) throw new Error(`Invalid semver: ${a} / ${b}`);
-    for (let i = 0; i < 3; i++) {
-        if (pa[i] !== pb[i]) return pa[i] - pb[i];
-    }
-    return 0;
-}
-
 // Only project versions allow a fourth segment, e.g. 1.9.4.1.
 function parseProjectVersion(version) {
     const m = String(version).match(/^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/);

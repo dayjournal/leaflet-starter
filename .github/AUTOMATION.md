@@ -103,8 +103,43 @@ confirms setup. Checking that `schedule` fires is a separate check.
 For repositories with `workflows/pages.yml`, automatic deployment follows a
 successful `CI` run for a push to this repository's `main`. The build checks
 out the exact commit CI validated. PRs (including a fork branch named `main`),
-failed CI and cancelled CI do not trigger an automatic deployment. GitHub
-Release creation and Pages deployment are separate workflows.
+failed CI and cancelled CI do not trigger an automatic deployment. A manual
+run (`workflow_dispatch`) must be started on `main` and passes the same checks
+as an automatic one: it republishes the current `main` and cannot publish a
+branch, a tag, an older commit or a commit whose CI failed or has not
+finished. GitHub Release creation and Pages deployment are separate workflows.
+
+CI runs finish in any order and an old run can be re-run, so a completed run
+is not proof that its commit is still the tip of `main`, or that CI still
+passes for it. `scripts/pages-target.mjs` reads the tip of `main` and the
+commit's `ci.yml` runs through the GitHub API (`contents: read`,
+`actions: read`). A commit is published only while it is the tip of `main`
+and the latest push CI run for that exact commit has succeeded. The runs are
+not filtered by result, so a newer failed, cancelled or unfinished run, a
+re-run included, blocks the commit even after an earlier run passed. The
+workflow checks once in a first job, before anything enters a concurrency
+group, so that a stale run normally ends there, and once more right before
+`deploy-pages`, where the commit must also be the one the build job checked
+out. A run that does not qualify is skipped with a notice; a failed API
+request or an unreadable answer stops the run with an error.
+
+The check and the entry into a concurrency group are separate steps, and
+GitHub orders a group by arrival, not by commit. The groups are chosen so
+that a run which became stale in between can never cancel or replace the run
+for a newer commit. Builds use one group per commit (`pages-build-<sha>`):
+only another run for the same commit (a CI re-run or a manual run) replaces
+a running build, and a stale build that slipped past the first check costs
+its minutes and nothing else. Deployments share one group (`pages-deploy`),
+run one at a time and are never cancelled midway. The group uses
+`queue: max`, so every waiting run is kept (up to 100; beyond that GitHub
+cancels further runs) instead of only the newest one, and a stale run that
+arrives late cannot replace a waiting run for a newer commit. The queue is
+ordered by arrival, so the check right before `deploy-pages` decides when
+each run gets its turn: a run whose commit is no longer the tip of `main` is
+skipped and the newer run publishes. `queue: max` cannot be combined with
+`cancel-in-progress: true`. Whether GitHub accepts the setting and keeps
+and skips queued runs as intended can only be observed on GitHub, not in
+the local tests.
 
 Before merging the Pages workflow:
 
@@ -117,21 +152,21 @@ Before merging the Pages workflow:
    requires an environment without a manual approval requirement.
 3. Ensure Actions is enabled and the actions pinned in `pages.yml` are allowed
    by the repository/organization policy. The default workflow permission can
-   remain read-only: only the separate deploy job requests `pages: write` and
-   `id-token: write`. Pages does not need a PAT, the dependency-update App key,
-   or additional secrets.
+   remain read-only: the check and deploy jobs add `actions: read`, and only
+   the separate deploy job requests `pages: write` and `id-token: write`.
+   Pages does not need a PAT, the dependency-update App key, or additional
+   secrets.
 4. Merge the workflow into `main`, then check that the main push's `CI` succeeds
    and `Deploy GitHub Pages` completes. If the Pages settings were changed after
-   that run, re-run CI for the latest main push. For an intentional manual
-   redeployment, select `main` in the Pages workflow's **Run workflow** menu
-   after checking its CI result.
+   that run, run `Deploy GitHub Pages` from the **Run workflow** menu on `main`;
+   it publishes only after the CI run for that commit has succeeded.
 
-The build publishes `dist/`. Leaflet and OpenLayers set `VITE_BASE` to the
-repository path. Cesium keeps its relative `base: './'` so the plugin's runtime
-assets are copied and resolved correctly. Keep those library-specific build
-steps when sharing this workflow. Retained `docs/` scripts are local checks,
-not part of the automatic publication path. Generated `dist/` and `docs/`
-files are ignored and are not committed.
+The build publishes `dist/`. Leaflet, OpenLayers and MapLibre GL JS set
+`VITE_BASE` to the repository path. Cesium keeps its relative `base: './'` so
+the plugin's runtime assets are copied and resolved correctly. Keep those
+library-specific build steps when sharing this workflow. Retained `docs/`
+scripts are local checks, not part of the automatic publication path.
+Generated `dist/` and `docs/` files are ignored and are not committed.
 
 References: [Pages source settings](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 and [custom Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
@@ -152,11 +187,14 @@ Unsupported sources, fields and YAML aliases stop publication for manual review.
 
 The parser and version checker are pinned in `.github/package-lock.json`.
 Publish installs only these tools from main, with install scripts disabled.
-Dependabot proposes their updates separately. To run the validator tests locally:
+Dependabot proposes their updates separately. To run the validator, version
+selection and Pages target tests locally:
 
 ```sh
 npm ci --prefix .github --ignore-scripts --no-audit --no-fund
-node --test .github/scripts/verify-update.test.mjs
+node --test .github/scripts/verify-update.test.mjs \
+  .github/scripts/select-version.test.mjs \
+  .github/scripts/pages-target.test.mjs
 ```
 
 ## How versions are chosen
@@ -165,6 +203,30 @@ Only stable `x.y.z` releases that are at least 7 days old are taken, the same
 rule pnpm applies through `minimumReleaseAge` in `pnpm-workspace.yaml`. A group
 whose install, build or e2e fails is rolled back and listed in the PR; the other
 groups still ship.
+
+Updates stay within the current major version (`scripts/select-version.mjs`).
+When `latest` points at a new major, the run logs it and still takes a newer
+same-major release when one qualifies; otherwise the package, lockfile,
+project version and README are left unchanged. A skipped major is not a
+failure and never appears in the PR. Adopting it is manual, see below.
+
+## Major updates
+
+A new major of a managed package is a change to review, not a daily update:
+
+1. Read the library's migration guide and decide what the app, the e2e tests
+   and the build need.
+2. On a branch, install the release with `pnpm add <name>@<version>`
+   (`-D` for a devDependency). Keep `minimumReleaseAge`: a release younger
+   than 7 days is refused, so wait rather than bypass it.
+3. Make the code changes, then run `pnpm run format:check`, `pnpm test` and
+   `pnpm run test:visual`, and look at the map and any screenshot diff.
+4. Set the project version by the rule the daily update follows: the new
+   version of the package named in `projectVersionFollows` when that package
+   changed, otherwise a fourth segment. Update the `<Name> vX.Y.Z` lines in
+   both README sections.
+5. Open a pull request for human review. Once it is merged, the daily update
+   continues within the new major.
 
 ## Manual tooling updates
 
