@@ -5,7 +5,7 @@
 Start Leaflet easily.  
 - [Leaflet v1.9.4](https://leafletjs.com)  
 - [TypeScript v7.0.2](https://www.typescriptlang.org)  
-- [Vite v8.3.4](https://vitejs.dev)  
+- [Vite v8.3.5](https://vitejs.dev)  
 - node v24.21.0
 - pnpm v11.9.0
 
@@ -66,7 +66,7 @@ Copyright (c) 2018-2026 Yasunori Kirimoto
 Leafletを手軽に始める
 - [Leaflet v1.9.4](https://leafletjs.com)  
 - [TypeScript v7.0.2](https://www.typescriptlang.org)  
-- [Vite v8.3.4](https://vitejs.dev)  
+- [Vite v8.3.5](https://vitejs.dev)  
 - node v24.21.0
 - pnpm v11.9.0
 
